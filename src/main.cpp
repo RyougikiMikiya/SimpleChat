@@ -2,7 +2,7 @@
 
 #include <cstdlib>
 
-#include "simplechat.h"
+#include "simpleChat.h"
 
 
 int main(int argc, char **argv)

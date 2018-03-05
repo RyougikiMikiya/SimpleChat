@@ -1,7 +1,9 @@
 ﻿#include <iostream>
 #include <algorithm>
+#include <sstream>
 
 #include <cerrno>
+#include <cassert>
 #include <cstring>
 
 #include <sys/socket.h>
@@ -27,6 +29,7 @@ Guest::~Guest()
 
 int Guest::PostMessage(simpleMessage * msg)
 {
+
 	return 0;
 }
 
@@ -35,13 +38,13 @@ simpleMessage * Guest::RecvMessage()
 	return nullptr;
 }
 
+/*
 
-
-
+*/
 
 SimpleChat::SimpleChat(const char *name, int port): m_Port(port)
 {
-	m_Guests.emplace_back(name);
+	m_Guests.emplace_back(name, STDIN_FILENO);
 }
 
 SimpleChat::~SimpleChat()
@@ -91,7 +94,7 @@ void ChatHost::Start()
 
 	sockaddr_in cliaddr;
 	socklen_t cliLen = sizeof(cliaddr);
-	int nReady, maxFd;
+	int nReady, maxFd, tempFd;
 
 	FD_ZERO(&m_FdSet);
 	FD_SET(m_ListenFd, &m_FdSet);
@@ -109,25 +112,74 @@ void ChatHost::Start()
 
 		if (FD_ISSET(m_ListenFd, &rfd))
 		{
-			int cliFD = accept(m_ListenFd, (sockaddr*)&cliaddr, &cliLen);
-			if (cliFD < 0)
+			int cliFd = accept(m_ListenFd, (sockaddr*)&cliaddr, &cliLen);
+			if (cliFd < 0)
 			{
-				std::cerr << cliFD << "  " << errno << "  " << strerror(errno) << std::endl;
+				std::cerr << cliFd << "  " << errno << "  " << strerror(errno) << std::endl;
 				continue;
 			}
 			std::cout << inet_ntop(AF_INET, &cliaddr.sin_addr.s_addr, buf, sizeof buf) << std::endl;
-			FD_SET(cliFD, &m_FdSet);
-			auto it = std::find_if(m_Guests.begin(), m_Guests.end(), []() {return true; });
+			FD_SET(cliFd, &m_FdSet);
+			m_Guests.emplace_back("", cliFd);
 
-
-
-			if (cliFD > maxFd)
-				maxFd = cliFD;
+			if (cliFd > maxFd)
+				maxFd = cliFd;
 			if (--nReady == 0)//没有更多的事件了
 				continue;
 		}
 		
-		
+		for(auto it = m_Guests.begin(); it != m_Guests.end(); it++)
+		{
+            tempFd = it->GetFileDescr();
+			if(FD_ISSET(tempFd, &rfd))
+			{
+				simpleMessage *msg = it->RecvMessage();
+				assert(msg);
+                HandleMsg(msg, it);
+				if(--nReady == 0)
+					break;
+			}
+		}
 	}
 }
+
+int ChatHost::HandleMsg(simpleMessage *msg, std::list<Guest>::iterator it)
+{
+    switch(msg->GetMsgID())
+	{
+		case SPLMSG_LOGIN:
+		{
+            std::string name(msg->GetPayload());
+            auto position = std::find_if(m_Guests.begin(), m_Guests.end(), [name](Guest & guest){
+                    return guest.GetName() == name;
+			});
+            if(position != m_Guests.end())
+            {
+                simpleMessage *errMsg = new simpleMessage(SPLMSG_ERR);
+                std::stringstream contents;
+                contents << "Name :'" << name << "' has existed!";
+                errMsg->AddPayload(contents);
+                it->PostMessage(errMsg);
+                m_Guests.erase(it);
+            }
+            else
+            {
+                it->SetName(name);
+                simpleMessage *loginOkMsg = new simpleMessage(SPLMSG_OK);
+                it->PostMessage(loginOkMsg);
+            }
+		}
+		break;
+		case SPLMSG_TEXT:
+		{
+            for(auto it = m_Guests.begin(); it != m_Guests.end(); it++)
+            {
+                it->PostMessage(msg);
+            }
+		}
+		break;
+	}
+    return 0;
+}
+
 
