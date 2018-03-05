@@ -15,7 +15,7 @@
 
 #include <sys/signal.h>
 
-#include "simplechat.h"
+#include "simpleChat.h"
 
 Guest::Guest(std::string &name, int fd) : m_SelfName(name), m_Fd(fd)
 {
@@ -33,7 +33,7 @@ int Guest::PostMessage(simpleMessage * msg)
 	return 0;
 }
 
-simpleMessage * Guest::RecvMessage()
+simpleMessage *Guest::RecvMessage()
 {
 	return nullptr;
 }
@@ -42,16 +42,16 @@ simpleMessage * Guest::RecvMessage()
 
 */
 
-SimpleChat::SimpleChat(const char *name, int port): m_Port(port)
+SimpleChat::SimpleChat(std::string &name, int port): m_Port(port)
 {
-	m_Guests.emplace_back(name, STDIN_FILENO);
+    m_Guests.push_back(Guest(name, STDIN_FILENO));
 }
 
 SimpleChat::~SimpleChat()
 {
 }
 
-ChatHost::ChatHost(const char *name, int port) : SimpleChat(name, port)
+ChatHost::ChatHost(std::string &name, int port) : SimpleChat(name, port)
 {
 
 }
@@ -92,8 +92,6 @@ void ChatHost::Start()
 {
 	char buf[BUFSIZ];
 
-	sockaddr_in cliaddr;
-	socklen_t cliLen = sizeof(cliaddr);
 	int nReady, maxFd, tempFd;
 
 	FD_ZERO(&m_FdSet);
@@ -112,7 +110,9 @@ void ChatHost::Start()
 
 		if (FD_ISSET(m_ListenFd, &rfd))
 		{
-			int cliFd = accept(m_ListenFd, (sockaddr*)&cliaddr, &cliLen);
+            sockaddr_in cliaddr;
+            socklen_t cliLen = sizeof(cliaddr);
+            int cliFd = accept(m_ListenFd, (sockaddr*)&cliaddr, &cliLen);
 			if (cliFd < 0)
 			{
 				std::cerr << cliFd << "  " << errno << "  " << strerror(errno) << std::endl;
@@ -120,11 +120,13 @@ void ChatHost::Start()
 			}
 			std::cout << inet_ntop(AF_INET, &cliaddr.sin_addr.s_addr, buf, sizeof buf) << std::endl;
 			FD_SET(cliFd, &m_FdSet);
-			m_Guests.emplace_back("", cliFd);
+            std::string anonym;
+            m_Guests.push_back(Guest(anonym, cliFd));
 
 			if (cliFd > maxFd)
 				maxFd = cliFd;
-			if (--nReady == 0)//没有更多的事件了
+            --nReady;
+            if (nReady == 0)//没有更多的事件了
 				continue;
 		}
 		
@@ -136,7 +138,8 @@ void ChatHost::Start()
 				simpleMessage *msg = it->RecvMessage();
 				assert(msg);
                 HandleMsg(msg, it);
-				if(--nReady == 0)
+                --nReady;
+                if(nReady == 0)
 					break;
 			}
 		}
@@ -172,7 +175,7 @@ int ChatHost::HandleMsg(simpleMessage *msg, std::list<Guest>::iterator it)
 		break;
 		case SPLMSG_TEXT:
 		{
-            for(auto it = m_Guests.begin(); it != m_Guests.end(); it++)
+            for(auto it = m_Guests.begin(); it != m_Guests.end(); ++it)
             {
                 it->PostMessage(msg);
             }

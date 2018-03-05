@@ -3,7 +3,7 @@
 
 #include <set>
 #include <string>
-#include <list>
+#include <vector>
 
 #include <sys/select.h>
 
@@ -13,14 +13,14 @@
 class Guest
 {
 public:
-	Guest(std::string &name, int fd = -1);
+    Guest(const std::string &name, int fd = -1);
 	~Guest();
 
 	int PostMessage(simpleMessage *msg);
 	simpleMessage *RecvMessage();
 
-    void SetName(std::string &name){m_SelfName = name;}
-    void SetFileDescr(int fd) {m_FD = fd;}
+    void SetName(const std::string &name){m_SelfName = name;}
+    void SetFileDescr(int fd) {m_Fd = fd;}
     std::string GetName() const {return m_SelfName;}
     int GetFileDescr() const {return m_Fd;}
 
@@ -34,7 +34,7 @@ private:
 class SimpleChat
 {
 public:
-    SimpleChat(const char *name, int port);
+    SimpleChat(std::string &name, int port);
     virtual ~SimpleChat();
     virtual int Init() = 0;
     virtual void Start() = 0;
@@ -42,7 +42,7 @@ protected:
 
     virtual int HandleMsg(simpleMessage *msg, std::list<Guest>::iterator it) = 0;
 
-	std::list<Guest> m_Guests;
+    std::vector<Guest*> m_Guests;
     int m_Port;
 };
 
@@ -50,7 +50,7 @@ protected:
 class ChatHost : public SimpleChat
 {
 public:
-    ChatHost(const char *name, int port);
+    ChatHost(std::string &name, int port);
 
     //overrides
     int Init() override;
