@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
+#include <cassert>
 
 #include "simpleChat.h"
 
@@ -17,14 +18,25 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    SimpleChat *app;
+    SimpleChat *pApp;
     if(argc == 3)
     {
-        std::string name(argv[1]);
         int port = atoi(argv[2]);
-        app = new ChatHost(name, port);
+        assert(port > 0);
+        pApp = new ChatHost(port);
+        if(!pApp)
+        {
+            std::cout << "Failed to allocate memory!" << std::endl;
+            return -1;
+        }
+        pApp->Create(argc, argv);
+        pApp->Init();
+        pApp->Run();
     }
-    app->Init();
-    app->Start();
-	return 0;
+    else if(argc == 4)
+    {
+
+    }
+
+    return 0;
 }

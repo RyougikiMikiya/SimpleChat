@@ -5,7 +5,9 @@
 #include <sstream>
 
 
-enum MESSAGEID
+#define MSG_FRAME_HEADER 0x3154
+
+enum MessageID
 {
     SPLMSG_OK = 0xCAFE,
     SPLMSG_LOGIN,
@@ -19,7 +21,7 @@ class simpleMessage
 {
 public:
     simpleMessage(MESSAGEID ID);
-	~simpleMessage();
+    ~simpleMessage();
 
     void        AddPayload(std::stringstream &payload);
 
@@ -29,8 +31,25 @@ public:
 
 private:
     static int FrameHead;
-	MESSAGEID m_ID;
+    MESSAGEID m_ID;
     std::vector<char> m_Payload;
 };
+
+#pragma pack(1)
+
+struct SimpleMessage
+{
+    int FrameHead;
+    MessageID ID;
+    int Lenth;
+};
+
+struct NormalMessage : public SimpleMessage
+{
+    char Payload[0];
+};
+
+
+#pragma pack()
 
 #endif

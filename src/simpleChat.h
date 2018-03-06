@@ -10,39 +10,75 @@
 #include "simpleMessage.h"
 
 
-class Guest
+
+
+
+/*
+    Now not handle the err such as EINTER ,just print to STDIN and return -1.
+
+*/
+
+
+/*
+    When the GuestSession is created, it means that the file descriptor should be valid.
+    Session Provide lots of function to set/get attr.
+*/
+
+class GuestSession
 {
 public:
-    Guest(const std::string &name, int fd = -1);
-	~Guest();
+    GuestSession(int fd);
+    ~GuestSession();
 
-	int PostMessage(simpleMessage *msg);
-	simpleMessage *RecvMessage();
+    int PostMessage(simpleMessage *msg);
+    SimpleMessage *RecvMessage();
 
-    void SetName(const std::string &name){m_SelfName = name;}
-    void SetFileDescr(int fd) {m_Fd = fd;}
-    std::string GetName() const {return m_SelfName;}
-    int GetFileDescr() const {return m_Fd;}
+    //function for attr
+    void SetName(const std::string &name) {m_Attr.GuestName = name;}
+    std::string GetName() const {return m_Attr.GuestName;}
+
+    int GetFileDescr() const {return m_FD;}
 
 private:
+    //Attributes for each session guest
+    struct GuestAttr
+    {
+        std::string GuestName;
+        //some ohter attrs
+    };
 
-	int m_Fd;//read or write msg
-	std::string m_SelfName;
+    int m_FD;//read or write msg
+    long m_SessionID;//only id for each
+    GuestAttr m_Attr;
 };
 
+
+/*
+ * SimpleChat manage lots of GuestSession handle.It doesn't directly modify a session inner attr.
+*/
 
 class SimpleChat
 {
 public:
-    SimpleChat(std::string &name, int port);
+    SimpleChat(int port);
     virtual ~SimpleChat();
+    virtual int Create(int argc, char **argv) = 0;
     virtual int Init() = 0;
-    virtual void Start() = 0;
+    virtual int Run() = 0;
 protected:
+    typedef std::vector<GuestSession*>::iterator GuestsIter;
+    typedef std::vector<GuestSession*>::const_iterator GuestsConstIter;
 
-    virtual int HandleMsg(simpleMessage *msg, std::list<Guest>::iterator it) = 0;
+    int AddSession(int fd);
+    int CloseSession(GuestSession *session);
 
-    std::vector<Guest*> m_Guests;
+    GuestsIter FindSessionByFD(int fd);
+    GuestsIter FindSessionByName(const std::string &name);
+
+    virtual int HandleMsg(simpleMessage *msg, GuestSession *sender) = 0;
+
+    std::vector<GuestSession*> m_Guests;
+
     int m_Port;
 };
 
@@ -50,27 +86,28 @@ protected:
 class ChatHost : public SimpleChat
 {
 public:
-    ChatHost(std::string &name, int port);
+    ChatHost(int port);
 
     //overrides
+    int Create(int argc, char **argv);
     int Init() override;
-    void Start() override;
-	
+    int Run() override;
+    
 protected:
 
-    int HandleMsg(simpleMessage *msg , std::list<Guest>::iterator it);
+    int HandleMsg(simpleMessage *msg, GuestSession *sender);
 
 
 private:
     int m_ListenFd;
-	fd_set m_FdSet;
+    fd_set m_FdSet;
 
 };
 
 class ChatGuest : public SimpleChat
 {
 public:
-    ChatGuest();
+    ChatGuest(int port);
 };
 
 
