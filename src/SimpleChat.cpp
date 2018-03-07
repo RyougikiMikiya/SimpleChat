@@ -15,11 +15,12 @@
 
 #include <sys/signal.h>
 
+#include "SimpleUtility.h"
 #include "simpleChat.h"
 
 static long SimpleID = 0;
 
-#define HANDLEMSGRESULT_DELSESSION        -1
+#define HANDLEMSGRESULT_DELSESSION        -10
 
 
 
@@ -33,67 +34,97 @@ GuestSession::~GuestSession()
     assert(m_FD < 0);
 }
 
-int GuestSession::PostMessage(simpleMessage * msg)
+int GuestSession::PostMessage(SimpleMessage *pMsg)
 {
-    int remain = msg->GetMsgLenth();
-    char *buf = msg->GetPayload();
-    int nbytes;
-    while(remain > 0)
+    int result;
+    if(m_FD == STDIN_FILENO)
     {
-        nbytes = write(m_FD, buf, remain);
-        if(nbytes < 0)
+        NormalMessage *pFullMsg = static_cast<NormalMessage*>(pMsg);
+        std::cout << pFullMsg->Payload << std::endl;
+        return 0;
+    }
+    else
+    {
+        result = writen(m_FD, (char*)pMsg, sizeof(SimpleMessage) + pMsg->Lenth);
+        if(result < 0)
+        {
+            std::cerr << errno << "  " << strerror(errno) << std::endl;
             return -1;
-        remain -= nbytes;
-        buf += nbytes;
+        }
     }
     return 0;
 }
 
 SimpleMessage *GuestSession::RecvMessage()
 {
-    char buf[sizeof(SimpleMessage)];
-    int hdrLenth = sizeof(header);
-    if(m_FD != STDIN_FILENO)
-    {
+    int hdrLenth = sizeof(SimpleMessage);
+    char hdrBuf[sizeof(SimpleMessage)];
+    int remain, result;
 
+    if(m_FD == STDIN_FILENO)
+    {
+        std::string line;
+        std::getline(std::cin, line);
+        NormalMessage *pMsg = (NormalMessage *)malloc(hdrLenth + line.size());
+        pMsg->FrameHead = MSG_FRAME_HEADER;
+        pMsg->ID = SPLMSG_TEXT;
+        pMsg->Lenth = line.size();
+        memcpy(pMsg->Payload, line.c_str(), line.size());
+        return pMsg;
     }
     else
     {
-        int remain = hdrLenth;
-        while(remain > 0)
+        remain = hdrLenth;
+        result = readn(m_FD, hdrBuf, remain);
+        if(result < 0)
         {
-            int nbytes = read(m_FD, buf, remain);
-            if(nbytes < 0)
-                return NULL;
-            if(nbytes == 0)
-                //peer close socket
-                return NULL;
-            remain -= nbytes;
-            buf += nbytes;
-        }
-        SimpleMessage *header= reinterpret_cast<SimpleMessage*>(buf);
-        if(header->FrameHead != MSG_FRAME_HEADER)
-        {
-            cout << "Message frame head is incorrect!" << endl;
+            std::cerr << errno << "  " << strerror(errno) << std::endl;
             return NULL;
         }
-        remain = header->Lenth;
-
-        switch(header->ID)
+        else if(result != remain)
         {
+            std::cerr << "Want to read " << remain << " bytes and actually read " << result <<" bytes " << std::endl;
+            return NULL;
+        }
+
+        SimpleMessage *pHeader= reinterpret_cast<SimpleMessage*>(hdrBuf);
+        if(pHeader->FrameHead != MSG_FRAME_HEADER)
+        {
+            std::cout << "Message frame head is incorrect!" << std::endl;
+            return NULL;
+        }
+        remain = pHeader->Lenth;
+
+        switch(pHeader->ID)
+        {
+            //same handle
+            case SPLMSG_TEXT:
             case SPLMSG_LOGIN:
             {
-                NormalMessage *body = (NormalMessage *)malloc(hdrLenth + remain);
-                if(!body)
+                NormalMessage *pFullMsg = (NormalMessage *)malloc(hdrLenth + remain);
+                if(!pFullMsg)
                     return NULL;
-                nbytes = read(m_FD, (char*)body + hdrLenth, remain);
-                //...
-                return body;
+                memcpy(pFullMsg, hdrBuf, hdrLenth);
+                char *pPayload = pFullMsg->Payload;
+
+                result = readn(m_FD, pPayload, remain);
+                if(result < 0)
+                {
+                    std::cerr << errno << "  " << strerror(errno) << std::endl;
+                    return NULL;
+                }
+                else if(result != remain)
+                {
+                    std::cerr << "Want to read " << remain << " bytes and actually read " << result <<" bytes " << std::endl;
+                    return NULL;
+                }
+
+                return pFullMsg;
             }
             break;
 
             default:
-            cout << "Unkown Message type!" << endl;
+            std::cout << "Unkown Message type!" << std::endl;
             break;
 
         }
@@ -252,7 +283,7 @@ int ChatHost::Run()
             tempFd = (*it)->GetFileDescr();
             if(FD_ISSET(tempFd, &rfd))
             {
-                simpleMessage *msg = (*it)->RecvMessage();
+                SimpleMessage *msg = (*it)->RecvMessage();
                 if(!msg)
                 {
                     //if we fail to recevie msg. erase?
@@ -261,6 +292,7 @@ int ChatHost::Run()
                 int result = HandleMsg(msg, *it);
                 if(result == HANDLEMSGRESULT_DELSESSION)
                 {
+                    delete *it;
                     it = m_Guests.erase(it);
                 }
                 --nReady;
@@ -271,32 +303,39 @@ int ChatHost::Run()
     }
 }
 
-int ChatHost::HandleMsg(simpleMessage *msg, GuestSession *sender)
+int ChatHost::HandleMsg(SimpleMessage *pMsg, GuestSession *pSender)
 {
-    assert(sender);
+    assert(pSender);
     int ret;
-    switch(msg->GetMsgID())
+    switch(pMsg->ID)
     {
         case SPLMSG_LOGIN:
         {
-            std::string name(msg->GetPayload());
+            NormalMessage *pLoginMsg = static_cast<NormalMessage*>(pMsg);
+            std::string name(pLoginMsg->Payload);
             GuestsIter position = FindSessionByName(name);
             if(position != m_Guests.end())
             {
-                simpleMessage *errMsg = new simpleMessage(SPLMSG_ERR);
-                std::stringstream contents;
-                contents << "Name :'" << name << "' has existed!";
-                errMsg->AddPayload(contents);
-                ret = sender->PostMessage(errMsg);
-                ret = CloseSession(sender);
-                delete sender;
+                std::stringstream errContents;
+                errContents << "Name :'" << name << "' has existed!";
+                int lenth = errContents.str().size();
+                NormalMessage *pErrMsg = static_cast<NormalMessage *>(malloc(sizeof(SimpleMessage) + lenth));
+                if(!pErrMsg)
+                {
+                    //out of memory...
+                    return -1;
+                }
+                pErrMsg->FrameHead = MSG_FRAME_HEADER;
+                pErrMsg->Lenth = lenth;
+                pErrMsg->ID = SPLMSG_ERR;
+                memcpy(pErrMsg->Payload, errContents.str().c_str(), lenth);
+                ret = pSender->PostMessage(pErrMsg);
+                ret = CloseSession(pSender);
                 return HANDLEMSGRESULT_DELSESSION;
             }
             else
             {
-                sender->SetName(name);
-                simpleMessage *loginOkMsg = new simpleMessage(SPLMSG_OK);
-                sender->PostMessage(loginOkMsg);
+
             }
         }
         break;
@@ -304,8 +343,9 @@ int ChatHost::HandleMsg(simpleMessage *msg, GuestSession *sender)
         {
             for(GuestsIter it = m_Guests.begin(); it != m_Guests.end(); ++it)
             {
-                ret = (*it)->PostMessage(msg);
+                ret = (*it)->PostMessage(pMsg);
             }
+            free(pMsg);
         }
         break;
     }

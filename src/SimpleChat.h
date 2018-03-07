@@ -30,7 +30,7 @@ public:
     GuestSession(int fd);
     ~GuestSession();
 
-    int PostMessage(simpleMessage *msg);
+    int PostMessage(SimpleMessage *msg);
     SimpleMessage *RecvMessage();
 
     //function for attr
@@ -75,7 +75,7 @@ protected:
     GuestsIter FindSessionByFD(int fd);
     GuestsIter FindSessionByName(const std::string &name);
 
-    virtual int HandleMsg(simpleMessage *msg, GuestSession *sender) = 0;
+    virtual int HandleMsg(SimpleMessage *pMsg, GuestSession *pSender) = 0;
 
     std::vector<GuestSession*> m_Guests;
 
@@ -95,7 +95,7 @@ public:
     
 protected:
 
-    int HandleMsg(simpleMessage *msg, GuestSession *sender);
+    int HandleMsg(SimpleMessage *pMsg, GuestSession *pSender);
 
 
 private:
