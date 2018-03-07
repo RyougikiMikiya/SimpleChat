@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <cassert>
 
-#include "simpleChat.h"
+#include "SimpleChat.h"
 
 
 int main(int argc, char **argv)
@@ -23,20 +23,36 @@ int main(int argc, char **argv)
     {
         int port = atoi(argv[2]);
         assert(port > 0);
-        pApp = new ChatHost(port);
+        ChatHost(port);
         if(!pApp)
         {
             std::cout << "Failed to allocate memory!" << std::endl;
             return -1;
         }
-        pApp->Create(argc, argv);
-        pApp->Init();
-        pApp->Run();
     }
     else if(argc == 4)
     {
-
+        int port = atoi(argv[3]);
+        assert(port > 0);
+        pApp = new ChatGuest(port);
+        if(!pApp)
+        {
+            std::cout << "Failed to allocate memory!" << std::endl;
+            return -1;
+        }
     }
+
+    int ret;
+
+    ret = pApp->Create(argc, argv);
+    if(ret < 0)
+        return -1;
+
+    pApp->Init();
+    if(ret < 0)
+        return -1;
+
+    pApp->Run();
 
     return 0;
 }

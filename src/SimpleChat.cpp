@@ -1,6 +1,8 @@
-﻿#include <iostream>
+﻿
+#include <iostream>
 #include <algorithm>
 #include <sstream>
+#include <utility>
 
 #include <cerrno>
 #include <cassert>
@@ -11,20 +13,17 @@
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <netinet/in.h>
-
 #include <sys/signal.h>
 
 #include "SimpleUtility.h"
-#include "simpleChat.h"
+#include "SimpleChat.h"
 
 static long SimpleID = 0;
 
-#define HANDLEMSGRESULT_DELSESSION        -10
+#define HANDLEMSGRESULT_DELSESSION        100
 
 
-
-GuestSession::GuestSession(int fd) : m_FD(fd), m_SessionID(SimpleID++)
+GuestSession::GuestSession(int fd) : m_FD(fd), m_SessionID(-1)
 {
 
 }
@@ -48,7 +47,7 @@ int GuestSession::PostMessage(SimpleMessage *pMsg)
         result = writen(m_FD, (char*)pMsg, sizeof(SimpleMessage) + pMsg->Lenth);
         if(result < 0)
         {
-            std::cerr << errno << "  " << strerror(errno) << std::endl;
+            std::cerr << "Write err: " << errno << "  " << strerror(errno) << std::endl;
             return -1;
         }
     }
@@ -72,13 +71,15 @@ SimpleMessage *GuestSession::RecvMessage()
         memcpy(pMsg->Payload, line.c_str(), line.size());
         return pMsg;
     }
+
     else
     {
+        bzero(hdrBuf, hdrLenth);
         remain = hdrLenth;
         result = readn(m_FD, hdrBuf, remain);
         if(result < 0)
         {
-            std::cerr << errno << "  " << strerror(errno) << std::endl;
+            std::cerr << "Recv fail: " << errno << "  " << strerror(errno) << std::endl;
             return NULL;
         }
         else if(result != remain)
@@ -94,14 +95,16 @@ SimpleMessage *GuestSession::RecvMessage()
             return NULL;
         }
         remain = pHeader->Lenth;
+        std::cout << "Remain msg lenth: " << remain << std::endl;
 
         switch(pHeader->ID)
         {
             //same handle
             case SPLMSG_TEXT:
             case SPLMSG_LOGIN:
+            case SPLMSG_LOGIN_OK:
             {
-                NormalMessage *pFullMsg = (NormalMessage *)malloc(hdrLenth + remain);
+                NormalMessage *pFullMsg = (NormalMessage *)malloc(hdrLenth + remain + 1);
                 if(!pFullMsg)
                     return NULL;
                 memcpy(pFullMsg, hdrBuf, hdrLenth);
@@ -118,7 +121,8 @@ SimpleMessage *GuestSession::RecvMessage()
                     std::cerr << "Want to read " << remain << " bytes and actually read " << result <<" bytes " << std::endl;
                     return NULL;
                 }
-
+                //对于文本消息来说,这里必须要加一个这个
+                pPayload[remain] = '\0';
                 return pFullMsg;
             }
             break;
@@ -133,17 +137,97 @@ SimpleMessage *GuestSession::RecvMessage()
     return NULL;
 }
 
-/*
+int GuestSession::CloseSession()
+{
+    assert(!(m_FD < 0));
+    int ret = close(m_FD);
+    if(ret < 0)
+        return ret;
+    m_FD = -1;
+    m_SessionID = -1;
+    m_Attr.GuestName.clear();
+    return 0;
+}
 
-*/
+SocketAccepter::SocketAccepter() : m_hListenFD(-1)
+{
 
-SimpleChat::SimpleChat(int port): m_Port(port)
+}
+
+int SocketAccepter::Create(int port)
+{
+    m_hListenFD = socket(AF_INET, SOCK_STREAM, 0);
+    if (m_hListenFD < 0)
+    {
+        std::cerr << errno << "  " << strerror(errno) << std::endl;
+        return m_hListenFD;
+    }
+
+    struct sockaddr_in servaddr;
+    bzero(&servaddr, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(port);
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    int opt = 1;
+    ret = setsockopt(m_hListenFD, SOL_SOCKET, SO_REUSEADDR, (const void *)&opt, sizeof(opt));
+    if (ret < 0)
+    {
+        close(m_hListenFD);
+        std::cerr << errno << "  " << strerror(errno) << std::endl;
+        return ret;
+    }
+
+    ret = bind(m_hListenFD, (sockaddr*)&servaddr, sizeof(servaddr));
+    if (ret < 0)
+    {
+        close(m_hListenFD);
+        std::cerr << errno << "  " << strerror(errno) << std::endl;
+        return ret;
+    }
+
+    ret = listen(m_hListenFD, 20);
+    if (ret < 0)
+    {
+        close(m_hListenFD);
+        std::cerr << errno << "  " << strerror(errno) << std::endl;
+        return ret;
+    }
+
+    return m_hListenFD;
+}
+
+int SocketAccepter::Destory()
+{
+    assert(m_hListenFD > 0);
+    int ret = close(m_hListenFD);
+    if(ret < 0)
+        return -1;
+    m_hListenFD = -1;
+    return ret;
+}
+
+
+
+SimpleChat::SimpleChat(int port): m_Port(port) , m_SelfSession(STDIN_FILENO), m_Select()
 {
 
 }
 
 SimpleChat::~SimpleChat()
 {
+}
+
+int SimpleChat::Create(int argc, char **argv)
+{
+    assert(argv[1]);
+    std::string name(argv[1]);
+    int ret = AddSession(STDIN_FILENO);
+    if(ret < 0)
+        return ret;
+    GuestsIter pos = FindSessionByFD(STDIN_FILENO);
+    assert(pos != m_Guests.end());
+    (*pos)->SetName(name);
+    return 0;
 }
 
 int SimpleChat::AddSession(int fd)
@@ -162,7 +246,7 @@ int SimpleChat::CloseSession(GuestSession *session)
     int tempFD = session->GetFileDescr();
     //prevent from multi closing, also close STDIN(0)
     assert(!(tempFD < 0));
-    int ret = close(tempFD);
+    int ret = session->CloseSession();
     if(ret < 0)
     {
         std::cerr << errno << "  " << strerror(errno) << std::endl;
@@ -170,13 +254,14 @@ int SimpleChat::CloseSession(GuestSession *session)
     return ret;
 }
 
-SimpleChat::GuestsIter SimpleChat::FindSessionByFD(int fd)
+GuestSession *SimpleChat::FindSessionByFD(int fd)
 {
     GuestsIter it = std::find_if(m_Guests.begin(), m_Guests.end(), [fd](GuestSession *session)
     {
             return session->GetFileDescr() == fd;
     });
-    return it;
+
+    return it != m_Guests.end() ? *it : NULL;
 }
 
 SimpleChat::GuestsIter SimpleChat::FindSessionByName(const std::string &name)
@@ -188,125 +273,155 @@ SimpleChat::GuestsIter SimpleChat::FindSessionByName(const std::string &name)
     return it;
 }
 
-ChatHost::ChatHost(int port) : m_ListenFd(-1), SimpleChat(port)
+SimpleChat::GuestsIter SimpleChat::FindSessionByID(long sid)
 {
-
+    GuestsIter it = std::find_if(m_Guests.begin(), m_Guests.end(), [sid](GuestSession *session)
+    {
+            return session->GetSessionID() == sid;
+    });
+    return it;
 }
 
-int ChatHost::Create(int argc, char **argv)
+
+Selector::Selector() : m_bStart(false), m_hRoot(-1) , m_pThread(0)
 {
-    std::string name(argv[1]);
-    int ret = AddSession(STDIN_FILENO);
-    if(ret < 0)
-        return ret;
-    GuestsIter pos = FindSessionByFD(STDIN_FILENO);
-    assert(pos != m_Guests.end());
-    (*pos)->SetName(name);
+}
+
+Selector::~Selector()
+{
+    assert(m_hRoot < 0);
+}
+
+int Selector::RegisterListener(int fd, Listener *pListener)
+{
+    int ret;
+    epoll_event ev;
+    bzero(&ev, sizeof(ev));
+    ev.events = EPOLLIN | EPOLLRDHUP;
+    ev.data.ptr = static_cast<void*>pListener;
+    ret = epoll_ctl(m_hRoot, EPOLL_CTL_ADD, fd, &ev);
+
     return 0;
 }
 
-int ChatHost::Init()
+int Selector::UnRegisterListener(int fd)
 {
     int ret;
-    if ((m_ListenFd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    epoll_event ev;
+    bzero(&ev, sizeof(ev));
+    ev.data.fd = fd;
+    ret = epoll_ctl(m_hRoot, EPOLL_CTL_DEL, fd, &ev);
+
+    return 0;
+}
+
+int Selector::Init()
+{
+    m_hRoot = epoll_create(1);
+    if(m_hRoot < 0)
     {
-        std::cerr << errno << "  " << strerror(errno) << std::endl;
-        return m_ListenFd;
+        std::cerr << "Epoll create err num: " << errno << strerror(errno) << std::endl;
+        return -1;
     }
-    struct sockaddr_in servaddr;
-    bzero(&servaddr, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_port = htons(m_Port);
-    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    int opt = 1;
-    if ((ret = setsockopt(m_ListenFd, SOL_SOCKET, SO_REUSEADDR, (const void *)&opt, sizeof(opt))) < 0)
+    else
     {
-        std::cerr << errno << "  " << strerror(errno) << std::endl;
-        return ret;
+        return 0;
     }
-    if ((ret = bind(m_ListenFd, (sockaddr*)&servaddr, sizeof(servaddr)) < 0))
+}
+
+int Selector::Start()
+{
+    m_bStart = true;
+    //..set pthread_attr 16k
+    int ret = pthread_create(&m_pThread, NULL, StartThread, this);
+    //...handle ret..
+    if(ret < 0)
+        m_bStart = false;
+    return ret;
+}
+
+int Selector::Stop()
+{
+    int ret = 0;
+    if(m_bStart)
     {
-        std::cerr << errno << "  " << strerror(errno) << std::endl;
-        return ret;
+        ret = pthread_join(m_pThread, NULL);
+        m_bStart = false;
+        assert(m_hRoot >= 0);
+        //...全部EPOLL_CTL_DEL
+        ret = close(m_hRoot);
+        m_hRoot = -1;
     }
-    if ((ret = listen(m_ListenFd, 20)) < 0)
+    return ret;
+}
+
+void *Selector::StartThread(void *pParam)
+{
+    int nReady, ret;
+    Selector *pThis = static_cast<Selector *>(pParam);
+    assert(pThis->ListenerList.size() > 0);
+
+    epoll_event events[1024];
+
+    while(m_bStart)
     {
-        std::cerr << errno << "  " << strerror(errno) << std::endl;
-        return ret;
+        nReady = epoll_wait(pThis->m_hRoot, events, 1024, -1);
+        if(nReady < 0)
+        {
+            std::cerr << "Epoll wait err : " << errno << strerr(errno) << std::endl;
+            return NULL;
+        }
+        for(int i = 0; i < nReady ; ++i)
+        {
+            Listener *pListener = static_cast<Listener *>events[i].data.ptr;
+            ret = pListener->OnReceive();
+        }
     }
+    return NULL;
+}
+
+ChatHost::ChatHost(int port) : m_hListenFD(-1), SimpleChat(port)
+{
+
+}
+
+int ChatHost::Init(const char *pName)
+{
+    int ret;
+    std::string name(pName);
+    m_SelfSession.SetName(name);
+
+    ret = m_Select.Init();
+    if(ret < 0)
+        return -1;
+
+    ret = Selector.RegisterListener(STDIN_FILENO, &m_SelfSession);
+    int listenSocket = m_Accepter.Create(m_Port);
+    if(listenSocket < 0)
+        return -1;
+    ret = Selector.RegisterListener(listenSocket, &m_Accepter);
+    if(ret < 0)
+        return -1;
+
     return 0;
 }
 
 int ChatHost::Run()
 {
-    char buf[BUFSIZ];
-
-    int nReady, maxFd, tempFd;
-
-    FD_ZERO(&m_FdSet);
-    FD_SET(m_ListenFd, &m_FdSet);
-    FD_SET(STDIN_FILENO, &m_FdSet);
-    maxFd = m_ListenFd;
-
-    while (1)
-    {
-        fd_set rfd = m_FdSet;//监听的rfd 因为下面可能添加新的clifd到m_fdSet里。
-        nReady = select(maxFd + 1, &rfd, NULL, NULL, NULL);
-        if (nReady < 0)
-        {
-            std::cerr << nReady << "  " << errno << "  " << strerror(errno) << std::endl;
-        }
-
-        if (FD_ISSET(m_ListenFd, &rfd))
-        {
-            sockaddr_in cliaddr;
-            socklen_t cliLen = sizeof(cliaddr);
-            int cliFD = accept(m_ListenFd, (sockaddr*)&cliaddr, &cliLen);
-            if (cliFD < 0)
-            {
-                std::cerr << cliFD << "  " << errno << "  " << strerror(errno) << std::endl;
-                continue;
-            }
-            std::cout << inet_ntop(AF_INET, &cliaddr.sin_addr.s_addr, buf, sizeof buf) << std::endl;
-            FD_SET(cliFD, &m_FdSet);
-            AddSession(cliFD);
-
-            if (cliFD > maxFd)
-                maxFd = cliFD;
-            --nReady;
-            if (nReady == 0)//没有更多的事件了
-                continue;
-        }
-
-        for(GuestsIter it = m_Guests.begin(); it != m_Guests.end(); ++it)
-        {
-            tempFd = (*it)->GetFileDescr();
-            if(FD_ISSET(tempFd, &rfd))
-            {
-                SimpleMessage *msg = (*it)->RecvMessage();
-                if(!msg)
-                {
-                    //if we fail to recevie msg. erase?
-                    continue;
-                }
-                int result = HandleMsg(msg, *it);
-                if(result == HANDLEMSGRESULT_DELSESSION)
-                {
-                    delete *it;
-                    it = m_Guests.erase(it);
-                }
-                --nReady;
-                if(nReady == 0)
-                    break;
-            }
-        }
-    }
+    int ret;
+    ret = m_Select.Start();
 }
 
 int ChatHost::HandleMsg(SimpleMessage *pMsg, GuestSession *pSender)
 {
     assert(pSender);
     int ret;
+    std::stringstream contents;
+    int lenth;
+    if(!pMsg)
+        return HANDLEMSGRESULT_DELSESSION;
+
+
     switch(pMsg->ID)
     {
         case SPLMSG_LOGIN:
@@ -316,26 +431,60 @@ int ChatHost::HandleMsg(SimpleMessage *pMsg, GuestSession *pSender)
             GuestsIter position = FindSessionByName(name);
             if(position != m_Guests.end())
             {
-                std::stringstream errContents;
-                errContents << "Name :'" << name << "' has existed!";
-                int lenth = errContents.str().size();
-                NormalMessage *pErrMsg = static_cast<NormalMessage *>(malloc(sizeof(SimpleMessage) + lenth));
+                contents << "Name :'" << name << "' has existed!";
+                lenth = contents.str().size();
+                NormalMessage *pErrMsg = (NormalMessage *)(malloc(sizeof(SimpleMessage) + lenth));
                 if(!pErrMsg)
                 {
                     //out of memory...
                     return -1;
                 }
+
+                //组消息要写一个函数...
                 pErrMsg->FrameHead = MSG_FRAME_HEADER;
-                pErrMsg->Lenth = lenth;
+                pErrMsg->Length = lenth;
                 pErrMsg->ID = SPLMSG_ERR;
-                memcpy(pErrMsg->Payload, errContents.str().c_str(), lenth);
+
+                memcpy(pErrMsg->Payload, contents.str().c_str(), lenth);
                 ret = pSender->PostMessage(pErrMsg);
+                free(pErrMsg);
+
                 ret = CloseSession(pSender);
-                return HANDLEMSGRESULT_DELSESSION;
+                //.....What ever, erase this it
+                ret = HANDLEMSGRESULT_DELSESSION;
             }
             else
             {
+                //一条单独的SPLMSG_OK，一条群发welcome
+                pSender->SetName(name);
 
+                char *pData = new char[len];
+                if( pData )
+                {
+                    MSG_TEXT *pTextMsg= new( pData ) MSG_TEXT( length );
+                    send();
+                    //pTextMsg->~MSG_TEXT();
+                    delete pTextMsg;
+                }
+
+                //....SPLMSG_OK
+                contents << "Welcome " << name << " add in!";
+                lenth = contents.str().size();
+                NormalMessage *pOkMsg = (NormalMessage *)(malloc(sizeof(SimpleMessage) + lenth));
+                if(!pOkMsg)
+                {
+                    return -1;
+                }
+                pOkMsg->FrameHead = MSG_FRAME_HEADER;
+                pOkMsg->Lenth = lenth;
+                pOkMsg->ID = SPLMSG_LOGIN_OK;
+                memcpy(pOkMsg->Payload, contents.str().c_str(), lenth);
+
+                for(GuestsIter it = m_Guests.begin(); it != m_Guests.end(); ++it)
+                {
+                    ret = (*it)->PostMessage(pOkMsg);
+                }
+                free(pOkMsg);
             }
         }
         break;
@@ -349,7 +498,123 @@ int ChatHost::HandleMsg(SimpleMessage *pMsg, GuestSession *pSender)
         }
         break;
     }
-    return 0;
+    return ret;
 }
 
 
+ChatGuest::ChatGuest(int port) : m_HostIP(0), m_hSocket(-1), SimpleChat(port)
+{
+
+}
+
+int ChatGuest::Create(int argc, char **argv)
+{
+    assert(argv);
+    int ret = SimpleChat::Create(argc, argv);
+    if(ret < 0)
+        return ret;
+    assert( argc > 2 );
+    assert(argv[2]);
+    ret = inet_pton(AF_INET, argv[2], (void*)&m_HostIP);
+    if(ret != 1)
+    {
+        std::cout << "Invaild IP address!Please enter IPV4 addr!" << std::endl;
+        return -1;
+    }
+    return 0;
+}
+
+int ChatGuest::Init()
+{
+    m_hSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if(m_hSocket < 0)
+    {
+        std::cerr << errno << "  " << strerror(errno) << std::endl;
+        return m_hSocket;
+    }
+    return 0;
+}
+
+int ChatGuest::Run()
+{
+    int ret;
+    ret = ConnectHost();
+    if(ret < 0)
+        return ret;
+    ret = Login();
+    /*
+     * ......
+    */
+
+    return 0;
+}
+
+int ChatGuest::HandleMsg(SimpleMessage *pMsg, GuestSession *pSender)
+{
+    assert(pSender);
+    int ret;
+    std::stringstream contents;
+
+    switch(pMsg->ID)
+    {
+        case SPLMSG_TEXT:
+        {
+
+        }
+        break;
+
+        case SPLMSG_LOGIN_OK:
+        {
+
+        }
+        break;
+
+        case SPLMSG_ERR:
+        {
+
+        }
+        break;
+
+        default:
+        break;
+    }
+}
+
+int ChatGuest::ConnectHost()
+{
+    int ret;
+    struct sockaddr_in servaddr;
+    bzero(&servaddr, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(m_Port);
+    servaddr.sin_addr.s_addr = htonl(m_HostIP);
+
+    assert(m_hSocket != -1);
+
+    ret = connect(m_hSocket, (sockaddr *)&servaddr, sizeof(servaddr));
+    if(ret < 0)
+    {
+        std::cerr << errno << "  " << strerror(errno) << std::endl;
+        return ret;
+    }
+    ret = AddSession(m_hSocket);
+}
+
+int ChatGuest::Login()
+{
+    GuestsIter pSelf = FindSessionByFD(STDIN_FILENO);
+    GuestsIter pHost = FindSessionByFD(m_hSocket);
+    assert(pSelf!=m_Guests.end() && pHost != m_Guests.end());
+    NormalMessage *pMsg = (NormalMessage *)malloc(sizeof(SimpleMessage) + (*pSelf)->GetName().size());
+    if(!pMsg)
+        return -1;
+    pMsg->FrameHead = MSG_FRAME_HEADER;
+    pMsg->ID = SPLMSG_LOGIN;
+    pMsg->Lenth = (*pSelf)->GetName().size();
+    memcpy(pMsg->Payload, (*pSelf)->GetName().c_str(), pMsg->Lenth);
+    std::cout << "Login payload: " << pMsg->Payload << std::endl;
+    (*pHost)->PostMessage(pMsg);
+    SimpleMessage *pOkMsg = (*pSelf)->RecvMessage();
+    HandleMsg(pOkMsg, *pHost);
+
+}

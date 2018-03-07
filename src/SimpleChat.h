@@ -1,13 +1,16 @@
 #ifndef SIMPLECHAT_H
 #define SIMPLECHAT_H
 
-#include <set>
 #include <string>
 #include <vector>
+#include <map>
 
 #include <sys/select.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <sys/epoll.h>
 
-#include "simpleMessage.h"
+#include "SimpleMessage.h"
 
 
 
@@ -24,33 +27,63 @@
     Session Provide lots of function to set/get attr.
 */
 
-class GuestSession
+
+
+//Attributes for each session guest
+struct GuestAttr
+{
+    std::string GuestName;
+    //some ohter attrs
+};
+
+class Listener
+{
+public:
+    virtual ~Listener();
+    virtual int OnReceive() = 0;
+};
+
+class GuestSession : public Listener
 {
 public:
     GuestSession(int fd);
     ~GuestSession();
 
-    int PostMessage(SimpleMessage *msg);
+    //overrides
+    int OnReceive();
+
+    int PostMessage(SimpleMessage *pMsg);
     SimpleMessage *RecvMessage();
 
-    //function for attr
+    //function for setting attr
     void SetName(const std::string &name) {m_Attr.GuestName = name;}
-    std::string GetName() const {return m_Attr.GuestName;}
 
-    int GetFileDescr() const {return m_FD;}
+    const char *GetName() const {return m_Attr.GuestName.c_str();}
+    int GetSessionID() const {return m_SessionID;}
+
+    int CloseSession();
 
 private:
-    //Attributes for each session guest
-    struct GuestAttr
-    {
-        std::string GuestName;
-        //some ohter attrs
-    };
 
-    int m_FD;//read or write msg
     long m_SessionID;//only id for each
     GuestAttr m_Attr;
+    int m_FD;
 };
+
+class SocketAccepter : public Listener
+{
+public:
+    SocketAccepter();
+
+    int OnReceive();
+
+    int Create(int port);
+
+    int Destory();
+private:
+    int m_hListenFD;
+};
+
 
 
 /*
@@ -62,9 +95,6 @@ class SimpleChat
 public:
     SimpleChat(int port);
     virtual ~SimpleChat();
-    virtual int Create(int argc, char **argv) = 0;
-    virtual int Init() = 0;
-    virtual int Run() = 0;
 protected:
     typedef std::vector<GuestSession*>::iterator GuestsIter;
     typedef std::vector<GuestSession*>::const_iterator GuestsConstIter;
@@ -72,42 +102,75 @@ protected:
     int AddSession(int fd);
     int CloseSession(GuestSession *session);
 
-    GuestsIter FindSessionByFD(int fd);
+    GuestSession *FindSessionByFD(int fd);
     GuestsIter FindSessionByName(const std::string &name);
+    GuestsIter FindSessionByID(long sid);
 
     virtual int HandleMsg(SimpleMessage *pMsg, GuestSession *pSender) = 0;
 
     std::vector<GuestSession*> m_Guests;
 
+    GuestSession m_SelfSession;
+    Selector m_Select;
     int m_Port;
 };
 
+
+class Selector
+{
+
+public:
+    Selector();
+    ~Selector();
+
+    int RegisterListener(int fd, Listener* pListener);
+    int UnRegisterListener(int fd);
+
+    int Init();
+    int Start();
+    int Stop();
+
+private:
+    static void *StartThread(void *pParam);
+
+    int m_hRoot;
+    bool m_bStart;
+
+    pthread_t m_pThread;
+};
 
 class ChatHost : public SimpleChat
 {
 public:
     ChatHost(int port);
 
-    //overrides
-    int Create(int argc, char **argv);
-    int Init() override;
-    int Run() override;
-    
-protected:
-
-    int HandleMsg(SimpleMessage *pMsg, GuestSession *pSender);
-
+    int Init(const char *pName);
+    int Run();
 
 private:
-    int m_ListenFd;
-    fd_set m_FdSet;
-
+    SocketAccepter m_Accepter;
 };
 
 class ChatGuest : public SimpleChat
 {
 public:
     ChatGuest(int port);
+
+    int Init(const char *pIP, const char *pName) ;
+    int Run() ;
+
+protected:
+
+    int HandleMsg(SimpleMessage *pMsg, GuestSession *pSender) override;
+
+private:
+    int ConnectHost();
+    int Login();
+
+
+private:
+    int m_hSocket;
+    in_addr_t m_HostIP;
 };
 
 
