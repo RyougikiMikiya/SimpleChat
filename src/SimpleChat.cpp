@@ -33,7 +33,7 @@ GuestSession::~GuestSession()
     assert(m_FD < 0);
 }
 
-int GuestSession::PostMessage(SimpleMessage *pMsg)
+int GuestSession::PostMessage(SimpleMsgHdr *pMsg)
 {
     int result;
     if(m_FD == STDIN_FILENO)
@@ -44,7 +44,7 @@ int GuestSession::PostMessage(SimpleMessage *pMsg)
     }
     else
     {
-        result = writen(m_FD, (char*)pMsg, sizeof(SimpleMessage) + pMsg->Lenth);
+        result = writen(m_FD, (char*)pMsg, sizeof(SimpleMsgHdr) + pMsg->Lenth);
         if(result < 0)
         {
             std::cerr << "Write err: " << errno << "  " << strerror(errno) << std::endl;
@@ -54,10 +54,10 @@ int GuestSession::PostMessage(SimpleMessage *pMsg)
     return 0;
 }
 
-SimpleMessage *GuestSession::RecvMessage()
+SimpleMsgHdr *GuestSession::RecvMessage()
 {
-    int hdrLenth = sizeof(SimpleMessage);
-    char hdrBuf[sizeof(SimpleMessage)];
+    int hdrLenth = sizeof(SimpleMsgHdr);
+    char hdrBuf[sizeof(SimpleMsgHdr)];
     int remain, result;
 
     if(m_FD == STDIN_FILENO)
@@ -88,7 +88,7 @@ SimpleMessage *GuestSession::RecvMessage()
             return NULL;
         }
 
-        SimpleMessage *pHeader= reinterpret_cast<SimpleMessage*>(hdrBuf);
+        SimpleMsgHdr *pHeader= reinterpret_cast<SimpleMsgHdr*>(hdrBuf);
         if(pHeader->FrameHead != MSG_FRAME_HEADER)
         {
             std::cout << "Message frame head is incorrect!" << std::endl;
@@ -137,21 +137,22 @@ SimpleMessage *GuestSession::RecvMessage()
     return NULL;
 }
 
-int GuestSession::CloseSession()
-{
-    assert(!(m_FD < 0));
-    int ret = close(m_FD);
-    if(ret < 0)
-        return ret;
-    m_FD = -1;
-    m_SessionID = -1;
-    m_Attr.GuestName.clear();
-    return 0;
-}
-
 SocketAccepter::SocketAccepter() : m_hListenFD(-1)
 {
 
+}
+
+SocketAccepter::~SocketAccepter()
+{
+    assert(m_hListenFD == -1);
+}
+
+int SocketAccepter::OnReceive()
+{
+    assert(m_hListenFD > 0);
+    struct sockaddr_in cliAddr;
+    socklen_t addrLen;
+    int cliFD = accept(m_hListenFD, (struct sockaddr *) &cliAddr, &addrLen);
 }
 
 int SocketAccepter::Create(int port)
@@ -172,24 +173,24 @@ int SocketAccepter::Create(int port)
     ret = setsockopt(m_hListenFD, SOL_SOCKET, SO_REUSEADDR, (const void *)&opt, sizeof(opt));
     if (ret < 0)
     {
-        close(m_hListenFD);
         std::cerr << errno << "  " << strerror(errno) << std::endl;
+        ret = Destory();
         return ret;
     }
 
     ret = bind(m_hListenFD, (sockaddr*)&servaddr, sizeof(servaddr));
     if (ret < 0)
     {
-        close(m_hListenFD);
         std::cerr << errno << "  " << strerror(errno) << std::endl;
+        ret = Destory();
         return ret;
     }
 
     ret = listen(m_hListenFD, 20);
     if (ret < 0)
     {
-        close(m_hListenFD);
         std::cerr << errno << "  " << strerror(errno) << std::endl;
+        ret = Destory();
         return ret;
     }
 
@@ -292,8 +293,10 @@ Selector::~Selector()
     assert(m_hRoot < 0);
 }
 
-int Selector::RegisterListener(int fd, Listener *pListener)
+int Selector::RegisterListener(int fd, IListener *pListener)
 {
+    if()
+
     int ret;
     epoll_event ev;
     bzero(&ev, sizeof(ev));
@@ -304,7 +307,7 @@ int Selector::RegisterListener(int fd, Listener *pListener)
     return 0;
 }
 
-int Selector::UnRegisterListener(int fd)
+int Selector::UnRegisterListener(int fd, IListener *pListener)
 {
     int ret;
     epoll_event ev;
@@ -395,25 +398,28 @@ int ChatHost::Init(const char *pName)
     if(ret < 0)
         return -1;
 
-    ret = Selector.RegisterListener(STDIN_FILENO, &m_SelfSession);
-    int listenSocket = m_Accepter.Create(m_Port);
-    if(listenSocket < 0)
+    ret = m_Select.RegisterListener(STDIN_FILENO, &m_SelfSession);
+    if(ret < 0)
         return -1;
-    ret = Selector.RegisterListener(listenSocket, &m_Accepter);
+
+    ret = m_Select.RegisterListener(m_hListenFD, this);
     if(ret < 0)
         return -1;
 
     return 0;
 }
 
-int ChatHost::Run()
+
+int ChatHost::Start()
 {
     int ret;
     ret = m_Select.Start();
 }
 
-int ChatHost::HandleMsg(SimpleMessage *pMsg, GuestSession *pSender)
+int ChatHost::HandleMsg(SimpleMsgHdr *pMsg, GuestSession *pSender)
 {
+    assert( this );
+
     assert(pSender);
     int ret;
     std::stringstream contents;
@@ -433,7 +439,7 @@ int ChatHost::HandleMsg(SimpleMessage *pMsg, GuestSession *pSender)
             {
                 contents << "Name :'" << name << "' has existed!";
                 lenth = contents.str().size();
-                NormalMessage *pErrMsg = (NormalMessage *)(malloc(sizeof(SimpleMessage) + lenth));
+                NormalMessage *pErrMsg = (NormalMessage *)(malloc(sizeof(SimpleMsgHdr) + lenth));
                 if(!pErrMsg)
                 {
                     //out of memory...
@@ -470,7 +476,7 @@ int ChatHost::HandleMsg(SimpleMessage *pMsg, GuestSession *pSender)
                 //....SPLMSG_OK
                 contents << "Welcome " << name << " add in!";
                 lenth = contents.str().size();
-                NormalMessage *pOkMsg = (NormalMessage *)(malloc(sizeof(SimpleMessage) + lenth));
+                NormalMessage *pOkMsg = (NormalMessage *)(malloc(sizeof(SimpleMsgHdr) + lenth));
                 if(!pOkMsg)
                 {
                     return -1;
@@ -549,7 +555,7 @@ int ChatGuest::Run()
     return 0;
 }
 
-int ChatGuest::HandleMsg(SimpleMessage *pMsg, GuestSession *pSender)
+int ChatGuest::HandleMsg(SimpleMsgHdr *pMsg, GuestSession *pSender)
 {
     assert(pSender);
     int ret;
@@ -605,7 +611,7 @@ int ChatGuest::Login()
     GuestsIter pSelf = FindSessionByFD(STDIN_FILENO);
     GuestsIter pHost = FindSessionByFD(m_hSocket);
     assert(pSelf!=m_Guests.end() && pHost != m_Guests.end());
-    NormalMessage *pMsg = (NormalMessage *)malloc(sizeof(SimpleMessage) + (*pSelf)->GetName().size());
+    NormalMessage *pMsg = (NormalMessage *)malloc(sizeof(SimpleMsgHdr) + (*pSelf)->GetName().size());
     if(!pMsg)
         return -1;
     pMsg->FrameHead = MSG_FRAME_HEADER;
@@ -614,7 +620,7 @@ int ChatGuest::Login()
     memcpy(pMsg->Payload, (*pSelf)->GetName().c_str(), pMsg->Lenth);
     std::cout << "Login payload: " << pMsg->Payload << std::endl;
     (*pHost)->PostMessage(pMsg);
-    SimpleMessage *pOkMsg = (*pSelf)->RecvMessage();
+    SimpleMsgHdr *pOkMsg = (*pSelf)->RecvMessage();
     HandleMsg(pOkMsg, *pHost);
 
 }

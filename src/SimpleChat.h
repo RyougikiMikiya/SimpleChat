@@ -36,14 +36,14 @@ struct GuestAttr
     //some ohter attrs
 };
 
-class Listener
+class IListener
 {
 public:
-    virtual ~Listener();
+    virtual ~IListener();
     virtual int OnReceive() = 0;
 };
 
-class GuestSession : public Listener
+class GuestSession : public IListener
 {
 public:
     GuestSession(int fd);
@@ -52,16 +52,17 @@ public:
     //overrides
     int OnReceive();
 
-    int PostMessage(SimpleMessage *pMsg);
-    SimpleMessage *RecvMessage();
-
+public:
     //function for setting attr
     void SetName(const std::string &name) {m_Attr.GuestName = name;}
 
     const char *GetName() const {return m_Attr.GuestName.c_str();}
     int GetSessionID() const {return m_SessionID;}
 
-    int CloseSession();
+private:
+    int PostMessage(SimpleMsgHdr *pMsg);
+    SimpleMsgHdr *RecvMessage();
+    int HandleMessage(SimpleMsgHdr *pMsg);
 
 private:
 
@@ -69,22 +70,6 @@ private:
     GuestAttr m_Attr;
     int m_FD;
 };
-
-class SocketAccepter : public Listener
-{
-public:
-    SocketAccepter();
-
-    int OnReceive();
-
-    int Create(int port);
-
-    int Destory();
-private:
-    int m_hListenFD;
-};
-
-
 
 /*
  * SimpleChat manage lots of GuestSession handle.It doesn't directly modify a session inner attr.
@@ -106,12 +91,11 @@ protected:
     GuestsIter FindSessionByName(const std::string &name);
     GuestsIter FindSessionByID(long sid);
 
-    virtual int HandleMsg(SimpleMessage *pMsg, GuestSession *pSender) = 0;
+    virtual int HandleMsg(SimpleMsgHdr *pMsg, GuestSession *pSender) = 0;
 
     std::vector<GuestSession*> m_Guests;
 
     GuestSession m_SelfSession;
-    Selector m_Select;
     int m_Port;
 };
 
@@ -123,33 +107,40 @@ public:
     Selector();
     ~Selector();
 
-    int RegisterListener(int fd, Listener* pListener);
-    int UnRegisterListener(int fd);
+    int RegisterListener(int fd, IListener* pListener);
+    int UnRegisterListener(int fd, IListener *pListener);
 
     int Init();
+    int Uninit();
     int Start();
     int Stop();
 
 private:
     static void *StartThread(void *pParam);
-
     int m_hRoot;
     bool m_bStart;
-
     pthread_t m_pThread;
 };
 
-class ChatHost : public SimpleChat
+class ChatHost : public SimpleChat, public IListener
 {
 public:
     ChatHost(int port);
+    ~ChatHost();
+    //overrides
+    int OnReceive();
 
     int Init(const char *pName);
-    int Run();
+    int Uninit();
+
+    int Start();
+    int Stop();
 
 private:
-    SocketAccepter m_Accepter;
+    int m_hListenFD;
+    Selector m_Select;
 };
+
 
 class ChatGuest : public SimpleChat
 {
@@ -158,10 +149,6 @@ public:
 
     int Init(const char *pIP, const char *pName) ;
     int Run() ;
-
-protected:
-
-    int HandleMsg(SimpleMessage *pMsg, GuestSession *pSender) override;
 
 private:
     int ConnectHost();

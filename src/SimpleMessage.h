@@ -17,28 +17,26 @@ enum MessageID
 
 #pragma pack(1)
 
-struct SimpleMessage
+struct SimpleMsgHdr
 {
     int FrameHead;
     MessageID ID;
     const int Length;
 
 protected:
-    SimpleMessage( MessageID msgID, int len ) : Length( len )
+    SimpleMsgHdr( MessageID msgID, int len ) : Length( len )
     {
         ID = static_cast< UINT16 >( msgID );
     }
 };
 
-struct LoginMessage : public SimpleMessage
+struct LoginMessage : public SimpleMsgHdr
 {
     UINT32 ItemCount;
     ITEM   Item[0];
     char* Name;
 
-    static const LoginMessage* Unｐａｃｋ( );
-
-    NormalMessage () : SimpleMessage( SPLMSG_LOGIN, sizeof( *this ) ){}
+    LoginMessage () : SimpleMsgHdr( SPLMSG_LOGIN, sizeof( *this ) ){}
 };
 
 #pragma pack()
