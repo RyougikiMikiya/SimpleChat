@@ -137,78 +137,6 @@ SimpleMsgHdr *GuestSession::RecvMessage()
     return NULL;
 }
 
-SocketAccepter::SocketAccepter() : m_hListenFD(-1)
-{
-
-}
-
-SocketAccepter::~SocketAccepter()
-{
-    assert(m_hListenFD == -1);
-}
-
-int SocketAccepter::OnReceive()
-{
-    assert(m_hListenFD > 0);
-    struct sockaddr_in cliAddr;
-    socklen_t addrLen;
-    int cliFD = accept(m_hListenFD, (struct sockaddr *) &cliAddr, &addrLen);
-}
-
-int SocketAccepter::Create(int port)
-{
-    m_hListenFD = socket(AF_INET, SOCK_STREAM, 0);
-    if (m_hListenFD < 0)
-    {
-        std::cerr << errno << "  " << strerror(errno) << std::endl;
-        return m_hListenFD;
-    }
-
-    struct sockaddr_in servaddr;
-    bzero(&servaddr, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_port = htons(port);
-    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    int opt = 1;
-    ret = setsockopt(m_hListenFD, SOL_SOCKET, SO_REUSEADDR, (const void *)&opt, sizeof(opt));
-    if (ret < 0)
-    {
-        std::cerr << errno << "  " << strerror(errno) << std::endl;
-        ret = Destory();
-        return ret;
-    }
-
-    ret = bind(m_hListenFD, (sockaddr*)&servaddr, sizeof(servaddr));
-    if (ret < 0)
-    {
-        std::cerr << errno << "  " << strerror(errno) << std::endl;
-        ret = Destory();
-        return ret;
-    }
-
-    ret = listen(m_hListenFD, 20);
-    if (ret < 0)
-    {
-        std::cerr << errno << "  " << strerror(errno) << std::endl;
-        ret = Destory();
-        return ret;
-    }
-
-    return m_hListenFD;
-}
-
-int SocketAccepter::Destory()
-{
-    assert(m_hListenFD > 0);
-    int ret = close(m_hListenFD);
-    if(ret < 0)
-        return -1;
-    m_hListenFD = -1;
-    return ret;
-}
-
-
-
 SimpleChat::SimpleChat(int port): m_Port(port) , m_SelfSession(STDIN_FILENO), m_Select()
 {
 
@@ -218,28 +146,26 @@ SimpleChat::~SimpleChat()
 {
 }
 
-int SimpleChat::Create(int argc, char **argv)
-{
-    assert(argv[1]);
-    std::string name(argv[1]);
-    int ret = AddSession(STDIN_FILENO);
-    if(ret < 0)
-        return ret;
-    GuestsIter pos = FindSessionByFD(STDIN_FILENO);
-    assert(pos != m_Guests.end());
-    (*pos)->SetName(name);
-    return 0;
-}
-
 int SimpleChat::AddSession(int fd)
 {
     GuestSession *session = new GuestSession(fd);
-    if(!session)
-    {
-        return -1;
-    }
-    m_Guests.push_back(session);
+	if (!session)
+	{
+		return -1;
+	}
+
+	m_Guests.push_back(SessionPair{fd, session});
     return 0;
+}
+
+int SimpleChat::RemoveSession(SessionPair &session)
+{
+	GuestsIter it = std::find(m_Guests.begin(), m_Guests.end(), session);
+	if (it == m_Guests.end())
+		return -1;
+
+
+	return 0;
 }
 
 int SimpleChat::CloseSession(GuestSession *session)
@@ -284,104 +210,71 @@ SimpleChat::GuestsIter SimpleChat::FindSessionByID(long sid)
 }
 
 
-Selector::Selector() : m_bStart(false), m_hRoot(-1) , m_pThread(0)
-{
-}
 
-Selector::~Selector()
-{
-    assert(m_hRoot < 0);
-}
-
-int Selector::RegisterListener(int fd, IListener *pListener)
-{
-    if()
-
-    int ret;
-    epoll_event ev;
-    bzero(&ev, sizeof(ev));
-    ev.events = EPOLLIN | EPOLLRDHUP;
-    ev.data.ptr = static_cast<void*>pListener;
-    ret = epoll_ctl(m_hRoot, EPOLL_CTL_ADD, fd, &ev);
-
-    return 0;
-}
-
-int Selector::UnRegisterListener(int fd, IListener *pListener)
-{
-    int ret;
-    epoll_event ev;
-    bzero(&ev, sizeof(ev));
-    ev.data.fd = fd;
-    ret = epoll_ctl(m_hRoot, EPOLL_CTL_DEL, fd, &ev);
-
-    return 0;
-}
-
-int Selector::Init()
-{
-    m_hRoot = epoll_create(1);
-    if(m_hRoot < 0)
-    {
-        std::cerr << "Epoll create err num: " << errno << strerror(errno) << std::endl;
-        return -1;
-    }
-    else
-    {
-        return 0;
-    }
-}
-
-int Selector::Start()
-{
-    m_bStart = true;
-    //..set pthread_attr 16k
-    int ret = pthread_create(&m_pThread, NULL, StartThread, this);
-    //...handle ret..
-    if(ret < 0)
-        m_bStart = false;
-    return ret;
-}
-
-int Selector::Stop()
-{
-    int ret = 0;
-    if(m_bStart)
-    {
-        ret = pthread_join(m_pThread, NULL);
-        m_bStart = false;
-        assert(m_hRoot >= 0);
-        //...全部EPOLL_CTL_DEL
-        ret = close(m_hRoot);
-        m_hRoot = -1;
-    }
-    return ret;
-}
-
-void *Selector::StartThread(void *pParam)
-{
-    int nReady, ret;
-    Selector *pThis = static_cast<Selector *>(pParam);
-    assert(pThis->ListenerList.size() > 0);
-
-    epoll_event events[1024];
-
-    while(m_bStart)
-    {
-        nReady = epoll_wait(pThis->m_hRoot, events, 1024, -1);
-        if(nReady < 0)
-        {
-            std::cerr << "Epoll wait err : " << errno << strerr(errno) << std::endl;
-            return NULL;
-        }
-        for(int i = 0; i < nReady ; ++i)
-        {
-            Listener *pListener = static_cast<Listener *>events[i].data.ptr;
-            ret = pListener->OnReceive();
-        }
-    }
-    return NULL;
-}
+//int Selector::RegisterListener(int fd, IListener *pListener)
+//{
+//
+//	int ret;
+//	epoll_event ev;
+//	bzero(&ev, sizeof(ev));
+//	ev.events = EPOLLIN | EPOLLRDHUP;
+//	ev.data.ptr = static_cast<void*>(pListener);
+//	ret = epoll_ctl(m_hRoot, EPOLL_CTL_ADD, fd, &ev);
+//
+//	return 0;
+//}
+//
+//int Selector::UnRegisterListener(int fd, IListener *pListener)
+//{
+//	int ret;
+//	epoll_event ev;
+//	bzero(&ev, sizeof(ev));
+//	ev.data.fd = fd;
+//	ret = epoll_ctl(m_hRoot, EPOLL_CTL_DEL, fd, &ev);
+//
+//	return 0;
+//}
+//
+//int Selector::Init()
+//{
+//	m_hRoot = epoll_create(1);
+//	if (m_hRoot < 0)
+//	{
+//		std::cerr << "Epoll create err num: " << errno << strerror(errno) << std::endl;
+//		return -1;
+//	}
+//	else
+//	{
+//		return 0;
+//	}
+//}
+//
+//int Selector::Start()
+//{
+//	m_bStart = true;
+//	//..set pthread_attr 16k
+//	int ret = pthread_create(&m_pThread, NULL, StartThread, this);
+//	//...handle ret..
+//	if (ret < 0)
+//		m_bStart = false;
+//	return ret;
+//}
+//
+//int Selector::Stop()
+//{
+//	int ret = 0;
+//	if (m_bStart)
+//	{
+//		ret = pthread_join(m_pThread, NULL);
+//		m_bStart = false;
+//		assert(m_hRoot >= 0);
+//		//...全部EPOLL_CTL_DEL
+//		ret = close(m_hRoot);
+//		m_hRoot = -1;
+//	}
+//	return ret;
+//}
+//
 
 ChatHost::ChatHost(int port) : m_hListenFD(-1), SimpleChat(port)
 {
@@ -393,18 +286,16 @@ int ChatHost::Init(const char *pName)
     int ret;
     std::string name(pName);
     m_SelfSession.SetName(name);
-
-    ret = m_Select.Init();
-    if(ret < 0)
-        return -1;
-
-    ret = m_Select.RegisterListener(STDIN_FILENO, &m_SelfSession);
-    if(ret < 0)
-        return -1;
-
-    ret = m_Select.RegisterListener(m_hListenFD, this);
-    if(ret < 0)
-        return -1;
+	m_hEpollRoot = epoll_create(1);
+	if (m_hEpollRoot < 0)
+	{
+		std::cerr << "Epoll create err num: " << errno << strerror(errno) << std::endl;
+		return -1;
+	}
+	else
+	{
+		return 0;
+	}
 
     return 0;
 }
@@ -413,7 +304,50 @@ int ChatHost::Init(const char *pName)
 int ChatHost::Start()
 {
     int ret;
-    ret = m_Select.Start();
+}
+
+void *ChatHost::EpollThread(void *param)
+{
+	int nReady, ret;
+	ChatHost *pServer = static_cast<ChatHost*>(param);
+	
+	epoll_event events[1024];
+	SessionPair *pSession;
+
+	while (pServer->m_bStart)
+	{
+		nReady = epoll_wait(pServer->m_hEpollRoot, events, 1024, -1);
+		if (nReady < 0)
+		{
+			return NULL;
+		}
+		for (int i = 0; i < nReady; ++i)
+		{
+			pSession = static_cast<SessionPair*>(events[i].data.ptr);
+			if (pSession->fd == pServer->m_hListenFD && events[i].events == EPOLLIN)
+			{
+				sockaddr_in cliAddr;
+				socklen_t cliLen;
+				int cliFD = accept(pServer->m_hListenFD, (sockaddr *)&cliAddr, &cliLen);
+				if (cliFD < 0)
+				{
+					//
+				}
+				//GuestAttr
+				pServer->AddSession(cliFD);
+			}
+			else if (events[i].events == EPOLLIN)
+			{
+				//pSession->session->HandleMsg();
+			}
+			else if (events[i].events == EPOLLHUP)
+			{
+				pServer->RemoveSession(*pSession);
+			}
+		}
+	}
+
+	return nullptr;
 }
 
 int ChatHost::HandleMsg(SimpleMsgHdr *pMsg, GuestSession *pSender)

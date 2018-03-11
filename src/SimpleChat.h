@@ -8,6 +8,7 @@
 #include <sys/select.h>
 #include <netinet/in.h>
 #include <pthread.h>
+
 #include <sys/epoll.h>
 
 #include "SimpleMessage.h"
@@ -36,21 +37,11 @@ struct GuestAttr
     //some ohter attrs
 };
 
-class IListener
-{
-public:
-    virtual ~IListener();
-    virtual int OnReceive() = 0;
-};
-
-class GuestSession : public IListener
+class GuestSession
 {
 public:
     GuestSession(int fd);
     ~GuestSession();
-
-    //overrides
-    int OnReceive();
 
 public:
     //function for setting attr
@@ -81,54 +72,34 @@ public:
     SimpleChat(int port);
     virtual ~SimpleChat();
 protected:
-    typedef std::vector<GuestSession*>::iterator GuestsIter;
-    typedef std::vector<GuestSession*>::const_iterator GuestsConstIter;
+	struct SessionPair
+	{
+		int fd;
+		GuestSession *pSession;
+	};
+
+
+    typedef std::vector<SessionPair>::iterator GuestsIter;
+    typedef std::vector<SessionPair>::const_iterator GuestsConstIter;
 
     int AddSession(int fd);
-    int CloseSession(GuestSession *session);
+    int RemoveSession(SessionPair &session);
 
     GuestSession *FindSessionByFD(int fd);
     GuestsIter FindSessionByName(const std::string &name);
     GuestsIter FindSessionByID(long sid);
 
-    virtual int HandleMsg(SimpleMsgHdr *pMsg, GuestSession *pSender) = 0;
-
-    std::vector<GuestSession*> m_Guests;
+    std::vector<SessionPair> m_Guests;
 
     GuestSession m_SelfSession;
     int m_Port;
 };
 
-
-class Selector
-{
-
-public:
-    Selector();
-    ~Selector();
-
-    int RegisterListener(int fd, IListener* pListener);
-    int UnRegisterListener(int fd, IListener *pListener);
-
-    int Init();
-    int Uninit();
-    int Start();
-    int Stop();
-
-private:
-    static void *StartThread(void *pParam);
-    int m_hRoot;
-    bool m_bStart;
-    pthread_t m_pThread;
-};
-
-class ChatHost : public SimpleChat, public IListener
+class ChatHost : public SimpleChat
 {
 public:
     ChatHost(int port);
-    ~ChatHost();
-    //overrides
-    int OnReceive();
+    ~ChatHost(){}
 
     int Init(const char *pName);
     int Uninit();
@@ -137,8 +108,17 @@ public:
     int Stop();
 
 private:
+	static void *EpollThread(void *param);
+
+	int CreateEpoll();
+
+
+
     int m_hListenFD;
-    Selector m_Select;
+
+	bool m_bStart;
+	int m_hEpollRoot;
+	pthread_t m_hThread;
 };
 
 
