@@ -11,56 +11,8 @@
 
 #include <sys/epoll.h>
 
+#include "SimpleSession.h"
 #include "SimpleMessage.h"
-
-
-
-
-
-/*
-    Now not handle the err such as EINTER ,just print to STDIN and return -1.
-
-*/
-
-
-/*
-    When the GuestSession is created, it means that the file descriptor should be valid.
-    Session Provide lots of function to set/get attr.
-*/
-
-
-
-//Attributes for each session guest
-struct GuestAttr
-{
-    std::string GuestName;
-    //some ohter attrs
-};
-
-class GuestSession
-{
-public:
-    GuestSession(int fd);
-    ~GuestSession();
-
-public:
-    //function for setting attr
-    void SetName(const std::string &name) {m_Attr.GuestName = name;}
-
-    const char *GetName() const {return m_Attr.GuestName.c_str();}
-    int GetSessionID() const {return m_SessionID;}
-
-private:
-    int PostMessage(SimpleMsgHdr *pMsg);
-    SimpleMsgHdr *RecvMessage();
-    int HandleMessage(SimpleMsgHdr *pMsg);
-
-private:
-
-    long m_SessionID;//only id for each
-    GuestAttr m_Attr;
-    int m_FD;
-};
 
 /*
  * SimpleChat manage lots of GuestSession handle.It doesn't directly modify a session inner attr.
@@ -71,29 +23,41 @@ class SimpleChat
 public:
     SimpleChat(int port);
     virtual ~SimpleChat();
+
+    const char * GetSelfName() const {return m_SelfSession.GetName();}
+
 protected:
-	struct SessionPair
-	{
-		int fd;
-		GuestSession *pSession;
-	};
+    struct SessionPair
+    {
+        int fd;
+        SimpleSession *pSession;
+    };
 
 
     typedef std::vector<SessionPair>::iterator GuestsIter;
     typedef std::vector<SessionPair>::const_iterator GuestsConstIter;
 
-    int AddSession(int fd);
-    int RemoveSession(SessionPair &session);
+    virtual int AddSession(int fd) = 0;
 
-    GuestSession *FindSessionByFD(int fd);
+    virtual int RemoveSession(SessionPair *session);
+
     GuestsIter FindSessionByName(const std::string &name);
-    GuestsIter FindSessionByID(long sid);
+    GuestsIter FindSessionByFD(int fd);
 
     std::vector<SessionPair> m_Guests;
 
-    GuestSession m_SelfSession;
+    SimpleSession m_SelfSession;
     int m_Port;
 };
+
+
+struct AuthenInfo
+{
+    AuthenInfo(const std::string &name) : Name(name){}
+    std::string Name;
+};
+
+
 
 class ChatHost : public SimpleChat
 {
@@ -107,18 +71,28 @@ public:
     int Start();
     int Stop();
 
+    //fuction for session
+public:
+    void PushToAll(SimpleMsgHdr *pMsg);
+    bool LoginAuthentication(AuthenInfo &info);
+
+
 private:
-	static void *EpollThread(void *param);
+    static void *EpollThread(void *param);
 
-	int CreateEpoll();
+    int CreateEpoll();
+    int RegistEpoll(int fd, SessionPair *pPair);
+    int UnregistEpoll(int fd);
 
-
+    //overrides
+    int AddSession(fd);
+    int RemoveSession(SessionPair *pPair);
 
     int m_hListenFD;
 
-	bool m_bStart;
-	int m_hEpollRoot;
-	pthread_t m_hThread;
+    bool m_bStart;
+    int m_hEpollRoot;
+    pthread_t m_hThread;
 };
 
 
