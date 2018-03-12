@@ -114,12 +114,41 @@ int ChatHost::Init(const char *pName)
     return 0;
 }
 
+int ChatHost::Uninit()
+{
+    assert(!m_bStart);
+    for(GuestsIter it = m_Guests.begin(); it != m_Guests.end(); ++it)
+    {
+        epoll_ctl(m_hEpollRoot, EPOLL_CTL_DEL, it->fd, NULL);
+        assert(it->pSession);
+        delete it->pSession;
+        close(it->fd);
+    }
+
+    close(m_hListenFD);
+    close(m_hEpollRoot);
+    return 0;
+}
+
 
 int ChatHost::Start()
 {
     int ret;
+    m_bStart = true;
     ret = pthread_create(m_hThread, NULL, EpollThread, this);
-    pthread_join(m_hThread, NULL);
+    if(ret < 0)
+    {
+        m_bStart = false;
+        return -1;
+    }
+    return ret;
+}
+
+int ChatHost::Stop()
+{
+    assert(m_bStart && m_hThread > 0);
+    m_bStart = false;
+    int ret = pthread_join(m_hThread, NULL);
     return ret;
 }
 
@@ -151,7 +180,7 @@ void *ChatHost::EpollThread(void *param)
 
     while (pServer->m_bStart)
     {
-        nReady = epoll_wait(pServer->m_hEpollRoot, events, 1024, -1);
+        nReady = epoll_wait(pServer->m_hEpollRoot, events, 1024, 5000);
         if (nReady < 0)
         {
             return NULL;
