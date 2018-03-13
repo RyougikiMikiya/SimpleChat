@@ -18,41 +18,26 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    SimpleChat *pApp;
+    int port;
+
     if(argc == 3)
     {
-        int port = atoi(argv[2]);
+        port = atoi(argv[2]);
         assert(port > 0);
-        ChatHost(port);
-        if(!pApp)
-        {
-            std::cout << "Failed to allocate memory!" << std::endl;
-            return -1;
-        }
+        ChatHost host(port);
+        host.Init(argv[1]);
+        host.Start();
+        host.Stop();
+        host.Uninit();
     }
     else if(argc == 4)
     {
-        int port = atoi(argv[3]);
+        port = atoi(argv[3]);
         assert(port > 0);
-        pApp = new ChatGuest(port);
-        if(!pApp)
-        {
-            std::cout << "Failed to allocate memory!" << std::endl;
-            return -1;
-        }
+        ChatGuest guest(port);
+        guest.Init(argv[2], argv[1]);
+        guest.Start();
     }
-
-    int ret;
-
-    ret = pApp->Create(argc, argv);
-    if(ret < 0)
-        return -1;
-
-    pApp->Init();
-    if(ret < 0)
-        return -1;
-
-    pApp->Run();
 
     return 0;
 }

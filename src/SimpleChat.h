@@ -14,6 +14,11 @@
 #include "SimpleSession.h"
 #include "SimpleMessage.h"
 
+
+class SimpleSession;
+class SessionInHost;
+class SessionInGuest;
+
 /*
  * SimpleChat manage lots of GuestSession handle.It doesn't directly modify a session inner attr.
 */
@@ -24,8 +29,6 @@ public:
     SimpleChat(int port);
     virtual ~SimpleChat();
 
-    const char * GetSelfName() const {return m_SelfSession.GetName();}
-
 protected:
     struct SessionPair
     {
@@ -33,21 +36,20 @@ protected:
         SimpleSession *pSession;
     };
 
-
-    typedef std::vector<SessionPair>::iterator GuestsIter;
-    typedef std::vector<SessionPair>::const_iterator GuestsConstIter;
+    typedef std::vector<SessionPair*> SessionList;
+    typedef SessionList::iterator SessionIter;
+    typedef SessionList::const_iterator SessionConstIter;
 
     virtual int AddSession(int fd) = 0;
 
     virtual int RemoveSession(SessionPair *session);
 
-    GuestsIter FindSessionByName(const std::string &name);
-    GuestsIter FindSessionByFD(int fd);
+    SessionIter FindSessionByName(const std::string &name);
+    SessionIter FindSessionByFD(int fd);
 
-    std::vector<SessionPair> m_Guests;
-
-    SimpleSession m_SelfSession;
+    SessionList m_Guests;
     int m_Port;
+    SessionPair *m_SelfSession;
 };
 
 
@@ -75,7 +77,7 @@ public:
 public:
     void PushToAll(SimpleMsgHdr *pMsg);
     bool LoginAuthentication(AuthenInfo &info);
-
+    const char *GetSelfName() const;
 
 private:
     static void *EpollThread(void *param);
@@ -85,7 +87,7 @@ private:
     int UnregistEpoll(int fd);
 
     //overrides
-    int AddSession(fd);
+    int AddSession(int fd);
     int RemoveSession(SessionPair *pPair);
 
     int m_hListenFD;
@@ -102,16 +104,19 @@ public:
     ChatGuest(int port);
 
     int Init(const char *pIP, const char *pName) ;
-    int Run() ;
+    int Start() ;
 
 private:
     int ConnectHost();
     int Login();
 
+    //overrides
+    int AddSession(int fd);
 
 private:
     int m_hSocket;
     in_addr_t m_HostIP;
+    SessionPair *m_hostSession;
 };
 
 

@@ -18,9 +18,8 @@
 #include "SimpleUtility.h"
 #include "SimpleChat.h"
 
-SimpleChat::SimpleChat(int port): m_Port(port) , m_SelfSession(STDIN_FILENO), m_Select()
+SimpleChat::SimpleChat(int port): m_Port(port), m_SelfSession(NULL)
 {
-
 }
 
 SimpleChat::~SimpleChat()
@@ -29,32 +28,33 @@ SimpleChat::~SimpleChat()
 
 int SimpleChat::RemoveSession(SessionPair *pPair)
 {
-    GuestsIter it = std::find(m_Guests.begin(), m_Guests.end(), *pPair);
+    SessionIter it = std::find(m_Guests.begin(), m_Guests.end(), pPair);
     if (it == m_Guests.end())
         return -1;
     m_Guests.erase(it);
     return 0;
 }
 
-SimpleChat::GuestsIter SimpleChat::FindSessionByName(const std::string &name)
+SimpleChat::SessionIter SimpleChat::FindSessionByName(const std::string &name)
 {
-    GuestsIter it = find_if(m_Guests.begin(), m_Guests.end(), [name](SessionPair &s)
+    SessionIter it = find_if(m_Guests.begin(), m_Guests.end(), [name](SessionPair *s)
     {
-        return s.pSession->GetName() == name;
+        return s->pSession->GetName() == name;
     });
     return it;
 }
 
-SimpleChat::GuestsIter SimpleChat::FindSessionByFD(int fd)
+SimpleChat::SessionIter SimpleChat::FindSessionByFD(int fd)
 {
-    GuestsIter it = find_if(m_Guests.begin(), m_Guests.end(), [fd](SessionPair &s)
+    SessionIter it = find_if(m_Guests.begin(), m_Guests.end(), [fd](SessionPair *s)
     {
-        return s.fd == fd;
+        return s->fd == fd;
     });
     return it;
 }
 
-ChatHost::ChatHost(int port) : m_hListenFD(-1), SimpleChat(port)
+ChatHost::ChatHost(int port) : SimpleChat(port), m_hListenFD(-1), m_bStart(false),
+    m_hEpollRoot(-1)
 {
 
 }
@@ -63,16 +63,25 @@ int ChatHost::Init(const char *pName)
 {
     int ret;
     std::string name(pName);
-    m_SelfSession.SetName(name);
-
-
+    m_SelfSession = new SessionPair;
+    if(!m_SelfSession)
+        return -1;
+    m_SelfSession->pSession = new SessionInHost(STDIN_FILENO);
+    if(!m_SelfSession->pSession)
+    {
+        delete m_SelfSession;
+        return -1;
+    }
+    m_SelfSession->fd = STDIN_FILENO;
+    m_SelfSession->pSession->SetName(name);
+    m_Guests.push_back(m_SelfSession);
 
     m_hListenFD = socket(AF_INET, SOCK_STREAM, 0);
     if(m_hListenFD < 0)
         return -1;
 
     int on = 1;
-    ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    ret = setsockopt(m_hListenFD, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
     if(ret < 0)
     {
         std::cerr << strerror(errno) << std::endl;
@@ -83,9 +92,9 @@ int ChatHost::Init(const char *pName)
     struct sockaddr_in servAddr;
     bzero(&servAddr, sizeof(servAddr));
     servAddr.sin_family = AF_INET;
-    servAddr.sin_addr = htons(m_Port);
+    servAddr.sin_port = htons(m_Port);
     servAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    ret = bind(m_hListenFD, (sockaddr*)servAddr, sizeof(servAddr));
+    ret = bind(m_hListenFD, (sockaddr*)&servAddr, sizeof(servAddr));
     if(ret < 0)
     {
         std::cerr << strerror(errno) << std::endl;
@@ -109,23 +118,32 @@ int ChatHost::Init(const char *pName)
         return -1;
     }
 
-    RegistEpoll(m_hListenFD, NULL);
+    SessionPair *pListen = new SessionPair;
+    if(!pListen)
+        return -1;
+    pListen->fd = m_hListenFD;
+    pListen->pSession = NULL;
 
-    return 0;
+    ret = RegistEpoll(m_hListenFD, pListen);
+    if(ret < 0)
+        std::cerr << "Regist" << m_hListenFD << "epoll err" << strerror(errno) << std::endl;
+    ret = RegistEpoll(STDIN_FILENO, m_SelfSession);
+    if(ret < 0)
+        std::cerr << "Regist " <<  STDIN_FILENO <<"epoll err" << strerror(errno) << std::endl;
+    return ret;
 }
 
 int ChatHost::Uninit()
 {
     assert(!m_bStart);
-    for(GuestsIter it = m_Guests.begin(); it != m_Guests.end(); ++it)
+    for(SessionIter it = m_Guests.begin(); it != m_Guests.end();)
     {
-        epoll_ctl(m_hEpollRoot, EPOLL_CTL_DEL, it->fd, NULL);
-        assert(it->pSession);
-        delete it->pSession;
-        close(it->fd);
+        epoll_ctl(m_hEpollRoot, EPOLL_CTL_DEL, (*it)->fd, NULL);
+        delete (*it)->pSession;
+        close((*it)->fd);
+        delete *it;
+        it = m_Guests.erase(it);
     }
-
-    close(m_hListenFD);
     close(m_hEpollRoot);
     return 0;
 }
@@ -133,9 +151,10 @@ int ChatHost::Uninit()
 
 int ChatHost::Start()
 {
-    int ret;
+
+    int ret = 0;
     m_bStart = true;
-    ret = pthread_create(m_hThread, NULL, EpollThread, this);
+    ret = pthread_create(&m_hThread, NULL, EpollThread, this);
     if(ret < 0)
     {
         m_bStart = false;
@@ -147,16 +166,17 @@ int ChatHost::Start()
 int ChatHost::Stop()
 {
     assert(m_bStart && m_hThread > 0);
-    m_bStart = false;
+//    m_bStart = false;
     int ret = pthread_join(m_hThread, NULL);
     return ret;
 }
 
 void ChatHost::PushToAll(SimpleMsgHdr *pMsg)
 {
-    for(GuestsIter it = m_Guests.begin(); it != m_Guests.end(); ++it)
+    int ret;
+    for(SessionIter it = m_Guests.begin(); it != m_Guests.end(); ++it)
     {
-        ret = it->pSession->PostMessage(pMsg);
+        ret = (*it)->pSession->PostMessage(pMsg);
         if(ret < 0)//dosmt
         {
             ;
@@ -166,49 +186,67 @@ void ChatHost::PushToAll(SimpleMsgHdr *pMsg)
 
 bool ChatHost::LoginAuthentication(AuthenInfo &info)
 {
-    GuestsIter it = FindSessionByName(info.Name);
+    SessionIter it = FindSessionByName(info.Name);
     return it == m_Guests.end() ? true : false;
+}
+
+const char *ChatHost::GetSelfName() const
+{
+    assert(m_SelfSession);
+    return m_SelfSession->pSession->GetName();
 }
 
 void *ChatHost::EpollThread(void *param)
 {
+    assert(param);
+    std::cout << "Epoll Thread Start~" << std::endl;
+
+    int ret;
     int nReady;
     ChatHost *pServer = static_cast<ChatHost*>(param);
 
     epoll_event events[1024];
-    SessionPair *pSession;
+    SessionPair *pPair;
 
     while (pServer->m_bStart)
     {
-        nReady = epoll_wait(pServer->m_hEpollRoot, events, 1024, 5000);
+        nReady = epoll_wait(pServer->m_hEpollRoot, events, 1024, -1);
         if (nReady < 0)
         {
+            std::cerr << "epoll wait err:" << strerror(errno) << std::endl;
             return NULL;
         }
         for (int i = 0; i < nReady; ++i)
         {
-            pSession = static_cast<SessionPair*>(events[i].data.ptr);
-            if (pSession->fd == pServer->m_hListenFD && events[i].events == EPOLLIN)
+            pPair = static_cast<SessionPair*>(events[i].data.ptr);
+            if (pPair->fd == pServer->m_hListenFD && events[i].events == EPOLLIN)
             {
                 sockaddr_in cliAddr;
                 socklen_t cliLen;
                 int cliFD = accept(pServer->m_hListenFD, (sockaddr *)&cliAddr, &cliLen);
                 if (cliFD < 0)
                 {
-                    //
+                    std::cerr << "Accept err:" << strerror(errno) << std::endl;
+                    break;
                 }
                 pServer->AddSession(cliFD);
             }
             else if (events[i].events == EPOLLIN)
             {
-                pSession->pSession->OnRecvMessage(dynamic_cast<SimpleChat*>pServer);
+                ret = pPair->pSession->OnRecvMessage(dynamic_cast<SimpleChat*>(pServer));
+                if(ret < 0)
+                {
+                    std::cerr << "Handle session err!" << std::endl;
+                    pServer->RemoveSession(pPair);
+                }
             }
             else if (events[i].events == EPOLLHUP)
             {
-                pServer->RemoveSession(pSession);
+                pServer->RemoveSession(pPair);
             }
         }
     }
+    std::cout << "Leave epoll thread ~" << std::endl;
 
     return NULL;
 }
@@ -216,23 +254,17 @@ void *ChatHost::EpollThread(void *param)
 int ChatHost::RegistEpoll(int fd, SessionPair *pPair)
 {
     assert(fd >= 0);
+    assert(m_hEpollRoot >= 0);
+    assert(pPair);
     int ret;
-    EPOLL_EVENTS events = EPOLLIN;
+    uint32_t events = EPOLLIN;
     if(fd != m_hListenFD)
         events |= EPOLLHUP;
 
     epoll_event ev;
     bzero(&ev, sizeof(ev));
     ev.events = events;
-    if(pPair)
-    {
-        ev.data.ptr = (void *)pPair;
-    }
-    else
-    {
-        assert(fd == m_hListenFD);
-        ev.data.fd = fd;
-    }
+    ev.data.ptr = (void *)pPair;
     ret = epoll_ctl(m_hEpollRoot, EPOLL_CTL_ADD, fd, &ev);
 
     return ret;
@@ -248,16 +280,21 @@ int ChatHost::UnregistEpoll(int fd)
     return ret;
 }
 
-int ChatHost::AddSession(fd)
+int ChatHost::AddSession(int fd)
 {
     assert(fd >= 0);
     SimpleSession *pSession = new SessionInHost(fd);
     if(!pSession)
         return -1;
-    SessionPair pair{fd, pSession};
-    m_Guests.push_back(pair);
+    SessionPair *pPair = new SessionPair;
+    if(!pPair)
+        return -1;
+    pPair->fd = fd;
+    pPair->pSession = pSession;
+    m_Guests.push_back(pPair);
 
-    int ret = RegistEpoll(fd, &m_Guests[m_Guests.size()-1]);
+    assert(m_hEpollRoot >= 0);
+    int ret = RegistEpoll(fd, pPair);
     if(ret < 0)
     {
         close(fd);
@@ -271,18 +308,19 @@ int ChatHost::AddSession(fd)
 int ChatHost::RemoveSession(SimpleChat::SessionPair *pPair)
 {
     assert(pPair);
-    SessionPair tmpPair = *pPair;
+    SessionPair *tmpPair = pPair;
     int ret;
     ret = UnregistEpoll(pPair->fd);
     if(ret < 0)
         return ret;
     ret = SimpleChat::RemoveSession(pPair);
-    close(tmpPair.fd);
-    delete tmpPair.pSession;
+    close(tmpPair->fd);
+    delete tmpPair->pSession;
+    delete tmpPair;
     return ret;
 }
 
-ChatGuest::ChatGuest(int port) : m_HostIP(0), m_hSocket(-1), SimpleChat(port)
+ChatGuest::ChatGuest(int port) : SimpleChat(port), m_hSocket(-1), m_HostIP(0), m_hostSession(NULL)
 {
 
 }
@@ -291,7 +329,20 @@ int ChatGuest::Init(const char *pIP, const char *pName)
 {
     int ret;
     std::string name(pName);
-    m_SelfSession.SetName(name);
+    m_SelfSession = new SessionPair;
+    if(!m_SelfSession)
+        return -1;
+    m_SelfSession->pSession = new SessionInGuest(STDIN_FILENO);
+    if(!m_SelfSession->pSession)
+    {
+        delete m_SelfSession;
+        return -1;
+    }
+    m_SelfSession->fd = STDIN_FILENO;
+    m_SelfSession->pSession->SetName(name);
+    m_Guests.push_back(m_SelfSession);
+
+
     ret = inet_pton(AF_INET, pIP, &m_HostIP);
     if(ret != 1)
     {
@@ -307,17 +358,25 @@ int ChatGuest::Init(const char *pIP, const char *pName)
     return 0;
 }
 
-int ChatGuest::Run()
+int ChatGuest::Start()
 {
     int ret;
     ret = ConnectHost();
     if(ret < 0)
         return ret;
+    assert(m_hostSession);
     ret = Login();
-    /*
-     * ......
-    */
-
+    //客户端目前只能收
+    if(ret == HANDLEMSGRESULT_LOGINAUTHSUCCESS)
+    {
+        while(1)
+        {
+            ret = m_hostSession->pSession->OnRecvMessage(this);
+            if(ret < 0)
+                break;
+        }
+    }
+    //remove..
     return 0;
 }
 
@@ -330,7 +389,7 @@ int ChatGuest::ConnectHost()
     servaddr.sin_port = htons(m_Port);
     servaddr.sin_addr.s_addr = htonl(m_HostIP);
 
-    assert(m_hSocket != -1);
+    assert(m_hSocket >= 0);
 
     ret = connect(m_hSocket, (sockaddr *)&servaddr, sizeof(servaddr));
     if(ret < 0)
@@ -339,23 +398,45 @@ int ChatGuest::ConnectHost()
         return ret;
     }
     ret = AddSession(m_hSocket);
+    if(ret < 0)
+        return -1;
+    assert(m_Guests.size() == 2);
+    m_hostSession = m_Guests[1];
+    assert(m_hostSession->fd == m_hSocket);
+
+    return ret;
 }
 
 int ChatGuest::Login()
 {
-    GuestsIter pSelf = FindSessionByFD(STDIN_FILENO);
-    GuestsIter pHost = FindSessionByFD(m_hSocket);
-    assert(pSelf!=m_Guests.end() && pHost != m_Guests.end());
-    NormalMessage *pMsg = (NormalMessage *)malloc(sizeof(SimpleMsgHdr) + (*pSelf)->GetName().size());
-    if(!pMsg)
+    SessionIter it = FindSessionByFD(m_hSocket);
+    assert(it != m_Guests.end());
+    char *pBuf = new char[1024];
+    if(!pBuf)
         return -1;
-    pMsg->FrameHead = MSG_FRAME_HEADER;
-    pMsg->ID = SPLMSG_LOGIN;
-    pMsg->Lenth = (*pSelf)->GetName().size();
-    memcpy(pMsg->Payload, (*pSelf)->GetName().c_str(), pMsg->Lenth);
-    std::cout << "Login payload: " << pMsg->Payload << std::endl;
-    (*pHost)->PostMessage(pMsg);
-    SimpleMsgHdr *pOkMsg = (*pSelf)->RecvMessage();
-    HandleMsg(pOkMsg, *pHost);
+    assert(m_SelfSession->pSession);
+    int nameLen = strlen(m_SelfSession->pSession->GetName());
+    assert(nameLen > 0);
+    LoginMessage *pLogin = new(pBuf) LoginMessage(nameLen);
+    memcpy(pLogin->Payload, m_SelfSession->pSession->GetName(), nameLen);
+    int ret = (*it)->pSession->PostMessage(pLogin);
+    pLogin->~LoginMessage();
+    delete [] pBuf;
+    ret = (*it)->pSession->OnRecvMessage(this);
+    return ret;
+}
 
+int ChatGuest::AddSession(int fd)
+{
+    assert(fd >= 0);
+    SessionPair *pPair = new SessionPair;
+    if(!pPair)
+        return -1;
+    SimpleSession *pSession = new SessionInGuest(fd);
+    if(!pSession)
+        return -1;
+    pPair->fd = fd;
+    pPair->pSession = pSession;
+    m_Guests.push_back(pPair);
+    return 0;
 }

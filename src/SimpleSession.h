@@ -5,6 +5,10 @@
 #include "SimpleChat.h"
 #include "SimpleMessage.h"
 
+class SimpleChat;
+class ChatHost;
+class ChatGuest;
+
 //Attributes for each session guest
 struct GuestAttr
 {
@@ -25,17 +29,15 @@ public:
 
     //function for setting attr
     void SetName(const std::string &name) {m_Attr.GuestName = name;}
-    const char *GetName() const {return m_Attr.GuestName.c_str();}
-    int GetSessionID() const {return m_SessionID;}
+    const char *GetName() const {assert(this); return m_Attr.GuestName.c_str();}
+    long GetSessionID() const {return m_SessionID;}
 
-private:
+protected:
     SimpleMsgHdr *RecvMessage();
 
-private:
-    long m_SessionID;//only id for each
-    GuestAttr m_Attr;
     int m_FD;
-
+    long m_SessionID;
+    GuestAttr m_Attr;
     char m_RecvMsgBuf[2048];
     char m_SendMsgBuf[2048];
 };
@@ -44,14 +46,17 @@ class SessionInHost : public SimpleSession
 {
 public:
     //overrides
+    SessionInHost(int fd) : SimpleSession(fd){}
     int OnRecvMessage(SimpleChat *pHandler);
 private:
     int HandleMsgByHost(ChatHost *pHandler, SimpleMsgHdr *pMsg);
 };
 
+
 class SessionInGuest : public SimpleSession
 {
 public:
+    SessionInGuest(int fd) : SimpleSession(fd){}
     int OnRecvMessage(SimpleChat *pHandler);
 private:
     int HandleMsgByGuest(ChatGuest *pHandler, SimpleMsgHdr *pMsg);

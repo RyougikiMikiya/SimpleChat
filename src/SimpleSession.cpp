@@ -12,16 +12,16 @@
 #include "SimpleSession.h"
 
 
-static long SimpleID = 0;
+static long sSessionID = 0;
 
-SimpleSession::SimpleSession(int fd) : m_FD(fd), m_SessionID(-1)
+SimpleSession::SimpleSession(int fd) : m_FD(fd), m_SessionID(sSessionID++)
 {
 
 }
 
 SimpleSession::~SimpleSession()
 {
-    assert(m_FD < 0);
+
 }
 
 int SimpleSession::PostMessage(SimpleMsgHdr *pMsg)
@@ -29,7 +29,8 @@ int SimpleSession::PostMessage(SimpleMsgHdr *pMsg)
     int res;
     if(m_FD == STDIN_FILENO)
     {
-        TextMessage *pFullMsg = static_cast<TextMessage*>(pMsg);
+        ChatMessage *pFullMsg = static_cast<ChatMessage*>(pMsg);
+        pFullMsg->Payload[pFullMsg->Length] = '\0';
         std::cout << pFullMsg->Payload << std::endl;
         return 0;
     }
@@ -59,9 +60,7 @@ SimpleMsgHdr *SimpleSession::RecvMessage()
             std::cout << "Message is too long" << std::endl;
             return NULL;
         }
-        TextMessage *pMsg = new(m_RecvMsgBuf) TextMessage();
-        pMsg->FrameHead = MSG_FRAME_HEADER;
-        pMsg->ID = SPLMSG_TEXT;
+        ChatMessage *pMsg = new(m_RecvMsgBuf) ChatMessage(line.size());
         pMsg->Length = line.size();
         memcpy(pMsg->Payload, line.c_str(), line.size());
         return pMsg;
@@ -112,8 +111,8 @@ SimpleMsgHdr *SimpleSession::RecvMessage()
 
 int SessionInHost::OnRecvMessage(SimpleChat *pHandler)
 {
-    assert(pServer);
-    ChatHost *pServer = dynamic_cast<ChatHost*>(pHandler);
+    assert(pHandler);
+    ChatHost *pServer = static_cast<ChatHost*>(pHandler);
     SimpleMsgHdr *pMsg = RecvMessage();
     if(!pMsg)
         return -1;
@@ -122,54 +121,64 @@ int SessionInHost::OnRecvMessage(SimpleChat *pHandler)
 
 int SessionInHost::HandleMsgByHost(ChatHost *pHandler, SimpleMsgHdr *pMsg)
 {
+    assert(pMsg && pHandler);
     int ret;
     std::stringstream contents;
     int length;
-    assert(pMsg);
 
     switch(pMsg->ID)
     {
-        case SPLMSG_LOGIN:
+    case SPLMSG_LOGIN:
+    {
+        LoginMessage *pLoginMsg = reinterpret_cast<LoginMessage *>(pMsg);
+        std::string name(pLoginMsg->Payload);
+        AuthenInfo info(name);
+        std::cout << name << " request login!" << std::endl;
+        if(!pHandler->LoginAuthentication(info))
         {
-            LoginMessage *pLoginMsg = reinterpret_cast<LoginMessage *>(pMsg);
-            std::string name(pLoginMsg->Payload);
-            AuthenInfo info(name);
-            if(pHandler->LoginAuthentication(info))
-            {
-                ErrMessage errmsg(ERRMSG_NAMEXIST);
-                ret = PostMessage(errmsg);
-                ret = HANDLEMSGRESULT_NAMEHASEXIST;
-            }
-            else
-            {
-                //一条单独的SPLMSG_OK，一条群发welcome
-                SetName(name);
-
-                contents << pHandler->GetSelfName();
-                length = contents.str().size();
-                LoginOkMessage *pLoginOk = new(m_SendMsgBuf) LoginOkMessage(length);
-                memcpy(pLoginOk->Payload, contents.str().c_str(), length);
-                PostMessage(pLoginOk);
-                pLoginOk->~LoginOkMessage();
-
-                contents.clear();
-                contents.str("");
-
-                contents << "Welcome " << name << " add in!";
-                length = contents.str().size();
-                TextMessage *pWelcome = new(m_SendMsgBuf) TextMessage(length);
-                memcpy(pWelcome->Payload, contents.str().c_str(), length);
-                pHandler->PushToAll(pWelcome);
-                pWelcome->~TextMessage();
-            }
+            std::cout << name << " has existed, send err msg!" << std::endl;
+            ErrMessage errmsg(ERRMSG_NAMEXIST);
+            ret = PostMessage(&errmsg);
+            ret = HANDLEMSGRESULT_NAMEHASEXIST;
         }
-        break;
-        case SPLMSG_TEXT:
+        else
         {
-            TextMessage *pText = dynamic_cast<TextMessage*>(pMsg);
-            pHandler->PushToAll(pText);
+            //一条单独的SPLMSG_OK，一条群发welcome
+            SetName(name);
+
+            contents << pHandler->GetSelfName();
+            length = contents.str().size();
+            LoginOkMessage *pLoginOk = new(m_SendMsgBuf) LoginOkMessage(length);
+            memcpy(pLoginOk->Payload, contents.str().c_str(), length);
+            ret = PostMessage(pLoginOk);
+            pLoginOk->~LoginOkMessage();
+            if(ret < 0)
+                return -1;
+
+            contents.clear();
+            contents.str("");
+
+            contents << "Welcome " << name << " add in!";
+            length = contents.str().size();
+
+            //后面用Broadcast消息替换
+            ChatMessage *pWelcome = new(m_SendMsgBuf) ChatMessage(length);
+            memcpy(pWelcome->Payload, contents.str().c_str(), length);
+            pHandler->PushToAll(pWelcome);
+            pWelcome->~ChatMessage();
         }
+    }
         break;
+    case SPLMSG_CHAT:
+    {
+        ChatMessage *pText = static_cast<ChatMessage*>(pMsg);
+        pHandler->PushToAll(pText);
+    }
+        break;
+    default:
+        std::cout << "Unkown Message Type!" << std::endl;
+        break;
+
     }
     return ret;
 }
@@ -178,7 +187,7 @@ int SessionInGuest::OnRecvMessage(SimpleChat *pHandler)
 {
     assert(this);
     assert(pHandler);
-    ChatGuest *pClient = dynamic_cast<ChatHost*>(pHandler);
+    ChatGuest *pClient = static_cast<ChatGuest*>(pHandler);
     SimpleMsgHdr *pMsg = RecvMessage();
     if(!pMsg)
         return -1;
@@ -188,5 +197,37 @@ int SessionInGuest::OnRecvMessage(SimpleChat *pHandler)
 int SessionInGuest::HandleMsgByGuest(ChatGuest *pHandler, SimpleMsgHdr *pMsg)
 {
     assert(pHandler);
+    assert(pMsg->FrameHead == MSG_FRAME_HEADER);
+    assert(pMsg->Length < 2048);
+    char tmpBuf[2048];
+
+    switch(pMsg->ID)
+    {
+    case SPLMSG_LOGIN_OK:
+    {
+        LoginOkMessage *pLoginOk = static_cast<LoginOkMessage *>(pMsg);
+        memcpy(tmpBuf, pLoginOk->Payload, pLoginOk->Length);
+        tmpBuf[pLoginOk->Length] = '\0';
+        SetName(std::string(tmpBuf));
+        return HANDLEMSGRESULT_LOGINAUTHSUCCESS;
+    }
+        break;
+    case SPLMSG_CHAT:
+    {
+        ChatMessage *pText = reinterpret_cast<ChatMessage*>(pMsg);
+        pText->Payload[pText->Length] = '\0';
+        std::cout << pText->Payload << std::endl;
+    }
+        break;
+    case SPLMSG_ERR:
+    {
+        ;
+    }
+        break;
+    default:
+        std::cout << "Unkown Message Type!" << std::endl;
+        break;
+    }
+
     return 0;
 }

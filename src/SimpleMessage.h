@@ -11,7 +11,7 @@
 
 #define HANDLEMSGRESULT_DELSESSION        101
 #define HANDLEMSGRESULT_NAMEHASEXIST      102
-
+#define HANDLEMSGRESULT_LOGINAUTHSUCCESS  103
 
 
 enum MessageID
@@ -19,8 +19,9 @@ enum MessageID
     SPLMSG_OK = 0xCAFE,
     SPLMSG_LOGIN,
     SPLMSG_LOGIN_OK,
-    SPLMSG_TEXT,
-    SPLMSG_ERR
+    SPLMSG_CHAT,
+    SPLMSG_ERR,
+    SPLMSG_BROaDCAST
 };
 
 enum ErrMsgType
@@ -38,7 +39,7 @@ struct SimpleMsgHdr
     int32_t Length;
 
 protected:
-    SimpleMsgHdr( MessageID msgID, int len) : Length(len - sizeof(SimpleMsgHdr))
+    SimpleMsgHdr( MessageID msgID, int len) : FrameHead(MSG_FRAME_HEADER), Length(len - sizeof(SimpleMsgHdr))
     {
         assert(Length >=0 );
         ID = static_cast< uint16_t >( msgID );
@@ -51,9 +52,9 @@ struct LoginMessage : public SimpleMsgHdr
     char Payload[0];
 };
 
-struct TextMessage : public SimpleMsgHdr
+struct ChatMessage : public SimpleMsgHdr
 {
-    TextMessage (int payloadLen) : SimpleMsgHdr( SPLMSG_TEXT , payloadLen + sizeof(*this)){}
+    ChatMessage (int payloadLen) : SimpleMsgHdr( SPLMSG_CHAT , payloadLen + sizeof(*this)){}
     char Payload[0];
 
 };
