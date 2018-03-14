@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <cassert>
 
-#include "SimpleChat.h"
+#include "SimpleServer.h"
 
 
 int main(int argc, char **argv)
@@ -24,19 +24,11 @@ int main(int argc, char **argv)
     {
         port = atoi(argv[2]);
         assert(port > 0);
-        ChatHost host(port);
-        host.Init(argv[1]);
+        SimpleServer host;
+        host.Init(argv[1], port);
         host.Start();
         host.Stop();
         host.Uninit();
-    }
-    else if(argc == 4)
-    {
-        port = atoi(argv[3]);
-        assert(port > 0);
-        ChatGuest guest(port);
-        guest.Init(argv[2], argv[1]);
-        guest.Start();
     }
 
     return 0;
