@@ -3,13 +3,13 @@
 
 #include "SimpleUtility.h"
 
-int readn(int fd, char *pBuf, int n)
+int readn(int fd, void *pBuf, int n)
 {
     int   nLeft;
     int   nRead;
     char *pTmp;
 
-    pTmp = pBuf;
+    pTmp = reinterpret_cast<char*>(pBuf);
     nLeft = n;
     while (nLeft > 0)
     {
@@ -29,13 +29,13 @@ int readn(int fd, char *pBuf, int n)
     return (n - nLeft);     /* return >= 0 */
 }
 
-int writen(int fd, const char *pBuf, int n)
+int writen(int fd, const void *pBuf, int n)
 {
     int     nLeft;
     int     nWritten;
     const char  *pTmp;
 
-    pTmp = pBuf;
+    pTmp = reinterpret_cast<const char*>(pBuf);
     nLeft = n;
     while (nLeft > 0)
     {

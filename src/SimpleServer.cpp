@@ -12,7 +12,7 @@
 
 #include "SimpleServer.h"
 
-SimpleServer::SimpleServer() : m_hListenFD(-1), m_Port(-1), m_bStart(false)
+SimpleServer::SimpleServer() : m_hListenFD(-1), m_Port(-1), m_bStart(false), m_STDIN(this)
 {
 
 }
@@ -20,6 +20,7 @@ SimpleServer::SimpleServer() : m_hListenFD(-1), m_Port(-1), m_bStart(false)
 int SimpleServer::Init(const char *pName, int port)
 {
     assert(this);
+    assert(pName);
     assert(m_hListenFD < 0);
     m_selfAttr.UesrName = pName;
     assert(!m_selfAttr.UesrName.empty());
@@ -51,12 +52,22 @@ int SimpleServer::Init(const char *pName, int port)
 
     ret = m_Listener.InitListener();
     if(ret < 0)
+    {
+        ret = -2;
         goto ERR;
-
+    }
+    ret = m_Listener.RegisterRecevier(STDIN_FILENO, &m_STDIN);
+    if(ret < 0)
+    {
+        ret = -3;
+        goto ERR;
+    }
     ret = m_Listener.RegisterRecevier(m_hListenFD, this);
     if(ret < 0)
+    {
+        ret = -4;
         goto ERR;
-
+    }
     return 0;
 
     ERR:
@@ -65,12 +76,19 @@ int SimpleServer::Init(const char *pName, int port)
         close(m_hListenFD);
         m_hListenFD = -1;
     }
+    if(ret < -2)
+        m_Listener.UninitListener();
+
+    if(ret == -4)
+        m_Listener.UnRegisterRecevier(STDIN_FILENO, &m_STDIN);
+
     std::cerr << "Server Init ERR: " << strerror(errno) << std::endl;
     return ret;
 }
 
 int SimpleServer::Uninit()
 {
+    assert(this);
     int ret;
     if(m_hListenFD < 0)
     {
@@ -78,17 +96,19 @@ int SimpleServer::Uninit()
         return 0;
     }
 
-    for(SessionList::reverse_iterator rit = m_Sessions.rbegin(); rit!= m_Sessions.rend(); )
+    while(m_Sessions.size() > 0)
     {
-        assert(*rit);
-        (*rit)->Destory();
-        delete (*rit);
-        m_Sessions.erase((++rit).base());
+        CSession *pSession = m_Sessions.back();
+        assert(pSession);
+        pSession->Destory();
+        delete pSession;
+        m_Sessions.pop_back();
     }
 
+    ret = m_Listener.UnRegisterRecevier(STDIN_FILENO, &m_STDIN);
+    assert( ret >= 0);
     ret = m_Listener.UnRegisterRecevier(m_hListenFD, this);
-    if(ret < 0)
-        ;
+    assert( ret >= 0);
     ret = m_Listener.UninitListener();
     if(ret < 0)
         std::cout << "Listener Uninit fail" << std::endl;
@@ -96,7 +116,6 @@ int SimpleServer::Uninit()
     if(ret < 0)
     {
         std::cerr << "Server Uninit ERR: " << strerror(errno) << std::endl;
-        return ret;
     }
     m_hListenFD = -1;
     return ret;
@@ -106,9 +125,16 @@ int SimpleServer::Start()
 {
     assert(this);
     assert(m_hListenFD >= 0);
+    if(m_bStart)
+    {
+        std::cout << "Server has been started" << std::endl;
+        return 0;
+    }
+
     int ret = m_Listener.Start();
     if(ret < 0)
         goto ERR;
+    m_bStart = true;
 
     return ret;
     ERR:
@@ -118,7 +144,15 @@ int SimpleServer::Start()
 
 int SimpleServer::Stop()
 {
-    return m_Listener.Stop();
+    assert(this);
+    int ret = 0;
+    if(m_bStart)
+    {
+        ret = m_Listener.Stop();
+        if(ret > 0)
+            m_bStart = false;
+    }
+    return ret;
 }
 
 void SimpleServer::OnReceive()
@@ -127,7 +161,7 @@ void SimpleServer::OnReceive()
     assert(m_hListenFD >= 0);
 
     sockaddr_in cliAddr;
-    socklen_t cliLen;
+    socklen_t cliLen = sizeof(cliAddr);
     CSession *pSession;
 
     int cliFD = accept(m_hListenFD, (sockaddr *)&cliAddr, &cliLen);
@@ -151,11 +185,12 @@ void SimpleServer::OnReceive()
     }
 }
 
-void SimpleServer::PushToAll(SimpleMsgHdr *pMsg)
+void SimpleServer::PushToAll(const SimpleMsgHdr *pMsg)
 {
+    assert(pMsg);
     for(CSession *p : m_Sessions)
     {
-        p->SessionPost(pMsg);
+        p->Send(pMsg);
     }
 }
 
@@ -165,17 +200,7 @@ bool SimpleServer::CheckNameExisted(const std::string &name)
     {
             return pSession->GetUserName() == name;
     });
-    return it != m_Sessions.end() && name != m_selfAttr.UesrName ? true : false;
-}
-
-void SimpleServer::DisplayMsg(SimpleMsgHdr *pMsg)
-{
-    assert(pMsg);
-    assert(pMsg->ID == SPLMSG_CHAT);
-    assert(pMsg->Length < 2048);
-    ChatMessage *pFull = static_cast<ChatMessage*>(pMsg);
-    pFull->Contents[pMsg->Length] = '\0';
-    std::cout << pFull->Contents << std::endl;
+    return (it != m_Sessions.end() || name != m_selfAttr.UesrName) ? true : false;
 }
 
 SimpleServer::CSession *SimpleServer::OnSessionCreate(int fd)
@@ -201,11 +226,7 @@ void SimpleServer::OnSessionFinished(SimpleServer::CSession *pSession)
 {
     assert(pSession);
     ListIt it = std::find(m_Sessions.begin(), m_Sessions.end(), pSession);
-    if(it == m_Sessions.end())
-    {
-        std::cerr << "No this session in host!" << std::endl;
-        return;
-    }
+    assert(it != m_Sessions.end());
     m_Sessions.erase(it);
     //return value???
     pSession->Destory();
@@ -226,7 +247,8 @@ SimpleServer::CSession::~CSession()
 
 void SimpleServer::CSession::OnReceive()
 {
-    SimpleMsgHdr *pMsg = SessionRecv();
+    assert(this);
+    SimpleMsgHdr *pMsg = Recevie();
     if(!pMsg)
     {
         return;
@@ -245,9 +267,12 @@ int SimpleServer::CSession::Destory()
 {
     assert(this);
     assert(m_pServer);
+
     int ret = m_pServer->m_Listener.UnRegisterRecevier(m_hFD, this);
     if(ret < 0)
         goto ERR;
+    if(m_hFD < 0)
+        return 0;
     ret = close(m_hFD);
     if(ret < 0)
         goto ERR;
@@ -258,20 +283,21 @@ int SimpleServer::CSession::Destory()
     return ret;
 }
 
-SimpleMsgHdr *SimpleServer::CSession::SessionRecv()
+SimpleMsgHdr *SimpleServer::CSession::Recevie()
 {
-    int ret = RecevieMessage(m_hFD, m_RecvBuf, 2048);
-    if(ret == 0)
-        return NULL;
+    int ret = RecevieMessage(m_hFD, m_RecvBuf, BUF_MAX_LEN);
     if(ret < 0)
+    {
         m_pServer->OnSessionFinished(this);
+        return NULL;
+    }
 
     SimpleMsgHdr *pMsg = reinterpret_cast<SimpleMsgHdr*>(m_RecvBuf);
     assert(pMsg->FrameHead == MSG_FRAME_HEADER);
     return pMsg;
 }
 
-int SimpleServer::CSession::HandleMessage(SimpleMsgHdr *pMsg)
+int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
 {
     assert(pMsg && m_pServer);
     int ret;
@@ -282,15 +308,15 @@ int SimpleServer::CSession::HandleMessage(SimpleMsgHdr *pMsg)
     {
     case SPLMSG_LOGIN:
     {
-        LoginMessage *pLoginMsg = reinterpret_cast<LoginMessage *>(pMsg);
-        std::string name(pLoginMsg->LoginInfo);
-        AuthInfo info{name};
-        std::cout << name << " request login!" << std::endl;
-        if(this->LoginAuthentication(info))
+        AuthInfo info;
+        LoginMessage::Unpack(reinterpret_cast<const SimpleMsgHdr*>(m_RecvBuf), info);
+        assert(info.UserName.length() > 0);
+        std::cout << info.UserName << " request login!" << std::endl;
+        if(LoginAuthentication(info))
         {
-            std::cout << name << " has existed, send ERR msg!" << std::endl;
+            std::cout << info.UserName << " has existed, send ERR msg!" << std::endl;
             ErrMessage errmsg(ERRMSG_NAMEXIST);
-            ret = SessionPost(&errmsg);
+            ret = Send(&errmsg);
         }
         else
         {
@@ -300,7 +326,7 @@ int SimpleServer::CSession::HandleMessage(SimpleMsgHdr *pMsg)
             length = contents.str().size();
             LoginOkMessage *pLoginOk = new(m_SendBuf) LoginOkMessage(length);
             memcpy(pLoginOk->HostName, contents.str().c_str(), length);
-            ret = SessionPost(pLoginOk);
+            ret = Send(pLoginOk);
             pLoginOk->~LoginOkMessage();
             if(ret < 0)
                 return -1;
@@ -308,12 +334,12 @@ int SimpleServer::CSession::HandleMessage(SimpleMsgHdr *pMsg)
             contents.clear();
             contents.str("");
 
-            contents << "Welcome " << name << " add in!";
+            contents << "Welcome " << info.UserName << " add in!";
             length = contents.str().size();
 
             ChatMessage *pWelcome = new(m_SendBuf) ChatMessage(length);
             memcpy(pWelcome->Contents, contents.str().c_str(), length);
-            m_pServer->DisplayMsg(pWelcome);
+            PutOutMsg(pWelcome);
             m_pServer->PushToAll(pWelcome);
             pWelcome->~ChatMessage();
         }
@@ -321,8 +347,8 @@ int SimpleServer::CSession::HandleMessage(SimpleMsgHdr *pMsg)
         break;
     case SPLMSG_CHAT:
     {
-        ChatMessage *pText = static_cast<ChatMessage*>(pMsg);
-        m_pServer->DisplayMsg(pText);
+        const ChatMessage *pText = static_cast<const ChatMessage*>(pMsg);
+        PutOutMsg(pText);
         m_pServer->PushToAll(pText);
     }
         break;
@@ -334,9 +360,22 @@ int SimpleServer::CSession::HandleMessage(SimpleMsgHdr *pMsg)
     return ret;
 }
 
-bool SimpleServer::CSession::LoginAuthentication(SimpleServer::CSession::AuthInfo &info)
+bool SimpleServer::CSession::LoginAuthentication(AuthInfo &info)
 {
     return !m_pServer->CheckNameExisted(info.UserName);
 }
 
 
+
+void SimpleServer::SInputReceiver::OnReceive()
+{
+    assert(this);
+    assert(m_pServer);
+    std::string line;
+    std::getline(std::cin, line);
+    int length = line.size();
+    ChatMessage *pMsg = new(m_SendBuf) ChatMessage(length);
+    memcpy(pMsg->Contents, line.c_str(), length);
+    PutOutMsg(pMsg);
+    m_pServer->PushToAll(pMsg);
+}
