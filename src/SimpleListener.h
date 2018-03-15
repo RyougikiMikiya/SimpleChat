@@ -8,7 +8,6 @@
 class IReceiver
 {
 public:
-    virtual ~IReceiver(){}
     virtual void OnReceive() = 0;
 };
 
@@ -38,7 +37,7 @@ private:
     typedef RecevierList::value_type ListValue;
 
     int m_hEpollRoot;
-    bool m_bStart;
+    volatile bool m_bStart;
     pthread_t m_hThread;
     RecevierList m_Receviers;
 

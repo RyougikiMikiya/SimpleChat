@@ -6,6 +6,7 @@
 
 #include "SimpleMessage.h"
 #include "SimpleListener.h"
+#include "SimpleUtility.h"
 
 class SimpleServer : public IReceiver
 {
@@ -23,32 +24,29 @@ public:
         //function for Server
         int Create();
         int Destory();
-        int SessionPost(SimpleMsgHdr *pMsg)
+        int Send(const SimpleMsgHdr *pMsg)
         {
             assert(this);
-            PostMessage(m_hFD, pMsg);
+            return PostMessage(m_hFD, pMsg);
         }
-        const std::string &GetUserName()const {return m_Attr.UesrName;}
+        const std::string &GetUserName()const
+        {
+            assert(this);
+            return m_Attr.UesrName;
+        }
 
     private:
-        struct AuthInfo
-        {
-            std::string UserName;
-        };
-
         //function self
-        SimpleMsgHdr *SessionRecv();
-        int HandleMessage(SimpleMsgHdr *pMsg);
+        SimpleMsgHdr *Recevie();
+        int HandleMessage(const SimpleMsgHdr *pMsg);
         bool LoginAuthentication(AuthInfo &info);
-
-
 
         SimpleServer *m_pServer;
         int m_hFD;
         UserAttr m_Attr;
 
-        char m_SendBuf[2048];
-        char m_RecvBuf[2048];
+        char m_SendBuf[BUF_MAX_LEN];
+        char m_RecvBuf[BUF_MAX_LEN];
     };
 
     int Init(const char *pName, int port);
@@ -62,9 +60,18 @@ public:
 
     //fuction for session
 protected:
-    void PushToAll(SimpleMsgHdr *pMsg);
+    void PushToAll(const SimpleMsgHdr *pMsg);
     bool CheckNameExisted(const std::string &name);
-    void DisplayMsg(SimpleMsgHdr *pMsg);
+
+    class SInputReceiver : public IReceiver
+    {
+    public:
+        SInputReceiver(SimpleServer *pServer) : m_pServer(pServer){}
+        void OnReceive();
+    private:
+        SimpleServer *m_pServer;
+        char m_SendBuf[BUF_MAX_LEN];
+    };
 
 private:
     typedef std::vector<CSession*> SessionList;
@@ -76,9 +83,10 @@ private:
     UserAttr m_selfAttr;
     int m_hListenFD;
     int m_Port;
-    bool m_bStart;
+    volatile bool m_bStart;
     SessionList m_Sessions;
     SimpleListener m_Listener;
+    SInputReceiver m_STDIN;
 };
 
 #endif // SIMPLESERVER_H

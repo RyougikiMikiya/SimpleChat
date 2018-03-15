@@ -1,5 +1,7 @@
 #include <iostream>
+#include <sstream>
 
+#include <cstdio>
 #include <cstring>
 #include <cerrno>
 
@@ -8,7 +10,7 @@
 #include "SimpleMessage.h"
 
 
-int PostMessage(int fd, SimpleMsgHdr *pMsg, char *recvBuf)
+int PostMessage(int fd,const SimpleMsgHdr *pMsg)
 {
     assert(fd >= 0);
     assert(pMsg);
@@ -18,10 +20,11 @@ int PostMessage(int fd, SimpleMsgHdr *pMsg, char *recvBuf)
         std::cerr << "Write ERR: " << errno << "  " << strerror(errno) << std::endl;
         ret = -1;
     }
+
     return ret;
 }
 
-int RecevieMessage(int fd, char *pBuf, int bufLen)
+int RecevieMessage(int fd, void *pBuf, int bufLen)
 {
     assert(fd >= 0);
     assert(pBuf);
@@ -31,6 +34,7 @@ int RecevieMessage(int fd, char *pBuf, int bufLen)
     int remain, result;
     int ret = 0;
     SimpleMsgHdr *pMsg;
+    char *pRemain;
     if(bufLen < hdrLenth)
     {
         std::cerr << "bufLen short than Message header" << std::endl;
@@ -38,8 +42,13 @@ int RecevieMessage(int fd, char *pBuf, int bufLen)
     }
 
     remain = hdrLenth;
-    result = readn(fd, m_RecvBuf, remain);
-    if(result < 0)
+    result = readn(fd, pBuf, remain);
+    if(result == 0)
+    {
+        ret = -2;
+        goto ERR;
+    }
+    else if( result < 0 )
     {
         ret = -1;
         goto ERR;
@@ -57,6 +66,8 @@ int RecevieMessage(int fd, char *pBuf, int bufLen)
         goto ERR;
     }
     remain = pMsg->Length;
+    pMsg += 1;
+    pRemain = reinterpret_cast<char*>(pMsg);
     if(bufLen < hdrLenth + remain)
     {
         std::cerr << "bufLen short than Message payload" << std::endl;
@@ -64,8 +75,13 @@ int RecevieMessage(int fd, char *pBuf, int bufLen)
     }
     if(remain > 0)
     {
-        result = readn(fd, pBuf + hdrLenth, remain);
-        if(result < 0)
+        result = readn(fd, pRemain, remain);
+        if(result == 0)
+        {
+            ret = -2;
+            goto ERR;
+        }
+        else if(result < 0)
         {
             ret = -1;
             goto ERR;
@@ -82,8 +98,61 @@ int RecevieMessage(int fd, char *pBuf, int bufLen)
     ERR:
     if(ret == -1)
     {
-        std::cerr << "Recv fail: " << errno << "  " << strerror(errno) << std::endl;
+        perror("recv msg fail!\n");
     }
     return ret;
 
+}
+
+void PutOutMsg(const SimpleMsgHdr *pMsg)
+{
+    assert(pMsg);
+    assert(pMsg->FrameHead == MSG_FRAME_HEADER);
+    assert(pMsg->Length < BUF_MAX_LEN);
+    switch(pMsg->ID)
+    {
+    case SPLMSG_CHAT :
+    {
+        const ChatMessage *pFull = static_cast<const ChatMessage*>(pMsg);
+        printf("%.*s\n", pFull->Length , pFull->Contents);
+    }
+        break;
+    default:
+        std::cout << "Unkown Message type" << std::endl;
+        break;
+    }
+}
+
+LoginMessage *LoginMessage::Pack(void *pSendBuf,const AuthInfo &info)
+{
+    assert(pSendBuf);
+    assert(info.UserName.length() < NAME_MAX_LEN);
+    int totalLen = info.UserName.length() + sizeof(int);
+
+    LoginMessage msg(totalLen);
+    SimpleMsgHdr *pHeader = &msg;
+
+    char *pTmp = reinterpret_cast<char*>(pSendBuf);
+
+    pTmp = PutInStream(pTmp, *pHeader);
+    pTmp = PutStringInStream(pTmp, info.UserName.c_str(), static_cast<int>(info.UserName.length()));
+    LoginMessage *pFull = reinterpret_cast<LoginMessage*>(pSendBuf);
+    return pFull;
+}
+
+void LoginMessage::Unpack(const SimpleMsgHdr *pRecvBuf, AuthInfo &info)
+{
+    assert(pRecvBuf);
+    const SimpleMsgHdr *pHead = reinterpret_cast<const SimpleMsgHdr*>(pRecvBuf);
+    assert(pHead->FrameHead == MSG_FRAME_HEADER);
+    assert(pHead->ID == SPLMSG_LOGIN);
+    assert(pHead->Length > 0);
+    //skip header
+    pRecvBuf += 1;
+    int inLen = pHead->Length;
+    int outLen = inLen;
+    //get first string lenth & pos
+    const char *pTmp = GetInStream(pRecvBuf, &outLen);
+    assert(outLen < NAME_MAX_LEN);
+    info.UserName.insert(0, pTmp, outLen);
 }
