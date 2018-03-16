@@ -12,6 +12,8 @@
 
 #include "SimpleServer.h"
 
+static uint64_t sUID = 0;
+
 SimpleServer::SimpleServer() : m_hListenFD(-1), m_Port(-1), m_bStart(false), m_STDIN(this)
 {
 
@@ -22,8 +24,9 @@ int SimpleServer::Init(const char *pName, int port)
     assert(this);
     assert(pName);
     assert(m_hListenFD < 0);
-    m_selfAttr.UesrName = pName;
-    assert(!m_selfAttr.UesrName.empty());
+    m_SelfAttr.UesrName = pName;
+    assert(!m_SelfAttr.UesrName.empty());
+    m_SelfAttr.UID = sUID++;
     m_Port = port;
     int ret;
     int on = 1;
@@ -81,7 +84,7 @@ int SimpleServer::Init(const char *pName, int port)
 
     if(ret == -4)
         m_Listener.UnRegisterRecevier(STDIN_FILENO, &m_STDIN);
-
+    sUID = 0;
     std::cerr << "Server Init ERR: " << strerror(errno) << std::endl;
     return ret;
 }
@@ -194,13 +197,49 @@ void SimpleServer::PushToAll(const SimpleMsgHdr *pMsg)
     }
 }
 
-bool SimpleServer::CheckNameExisted(const std::string &name)
+uint64_t SimpleServer::LoginAuthentication(const AuthInfo &info)
 {
-    ListIt it = std::find_if(m_Sessions.begin(), m_Sessions.end(), [&name](CSession *pSession)
+    assert(sUID != 0);
+
+    //a lot of operation
+    if(info.UserName == m_SelfAttr.UesrName)
+        return 0;
+
+    uint64_t uid = CheckNameExisted(info.UserName);
+    if(uid != 0)
     {
-            return pSession->GetUserName() == name;
+        std::cout << "old in" << std::endl;
+        UserIt it = m_Users.find(uid);
+        assert(it != m_Users.end());
+        assert(!it->second.bOnline);
+        it->second.bOnline = true;
+        return uid;
+    }
+    else
+    {
+        std::cout << "new in" << std::endl;
+        UserAttr attr;
+        attr.UID = sUID;
+        sUID++;
+        attr.bOnline = true;
+        attr.UesrName = info.UserName;
+        m_Users.insert({attr.UID, attr});
+        return attr.UID;
+    }
+
+    return 0;
+}
+
+
+
+uint64_t SimpleServer::CheckNameExisted(const std::string &name) const
+{
+    UserList::const_iterator it = std::find_if(m_Users.cbegin(), m_Users.cend(), [&name](const UserList::value_type &pair)
+    {
+            return pair.second.UesrName == name;
     });
-    return (it != m_Sessions.end() || name != m_selfAttr.UesrName) ? true : false;
+
+    return it != m_Users.cend() ? it->second.UID : 0;
 }
 
 SimpleServer::CSession *SimpleServer::OnSessionCreate(int fd)
@@ -229,12 +268,19 @@ void SimpleServer::OnSessionFinished(SimpleServer::CSession *pSession)
     assert(it != m_Sessions.end());
     m_Sessions.erase(it);
     //return value???
+    uint64_t uid = pSession->GetUID();
+    if(uid != 0)
+    {
+        UserIt it = m_Users.find(uid);
+        assert(it != m_Users.end());
+        it->second.bOnline = false;
+    }
     pSession->Destory();
     delete pSession;
 }
 
 SimpleServer::CSession::CSession(SimpleServer *pHost, int fd) : m_pServer(pHost),
-    m_hFD(fd)
+    m_hFD(fd),  m_UID(0)
 {
     assert(pHost);
     assert(fd >= 0);
@@ -242,13 +288,13 @@ SimpleServer::CSession::CSession(SimpleServer *pHost, int fd) : m_pServer(pHost)
 
 SimpleServer::CSession::~CSession()
 {
-
+    assert(m_UID == 0);
 }
 
 void SimpleServer::CSession::OnReceive()
 {
     assert(this);
-    SimpleMsgHdr *pMsg = Recevie();
+    const SimpleMsgHdr *pMsg = Recevie();
     if(!pMsg)
     {
         return;
@@ -268,6 +314,8 @@ int SimpleServer::CSession::Destory()
     assert(this);
     assert(m_pServer);
 
+    if(m_UID != 0)
+        m_UID = 0;
     int ret = m_pServer->m_Listener.UnRegisterRecevier(m_hFD, this);
     if(ret < 0)
         goto ERR;
@@ -283,7 +331,7 @@ int SimpleServer::CSession::Destory()
     return ret;
 }
 
-SimpleMsgHdr *SimpleServer::CSession::Recevie()
+const SimpleMsgHdr *SimpleServer::CSession::Recevie()
 {
     int ret = RecevieMessage(m_hFD, m_RecvBuf, BUF_MAX_LEN);
     if(ret < 0)
@@ -292,7 +340,7 @@ SimpleMsgHdr *SimpleServer::CSession::Recevie()
         return NULL;
     }
 
-    SimpleMsgHdr *pMsg = reinterpret_cast<SimpleMsgHdr*>(m_RecvBuf);
+    const SimpleMsgHdr *pMsg = reinterpret_cast<const SimpleMsgHdr*>(m_RecvBuf);
     assert(pMsg->FrameHead == MSG_FRAME_HEADER);
     return pMsg;
 }
@@ -308,11 +356,13 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
     {
     case SPLMSG_LOGIN:
     {
+        assert(m_UID == 0);
         AuthInfo info;
         LoginMessage::Unpack(reinterpret_cast<const SimpleMsgHdr*>(m_RecvBuf), info);
         assert(info.UserName.length() > 0);
         std::cout << info.UserName << " request login!" << std::endl;
-        if(LoginAuthentication(info))
+        uint64_t uid= m_pServer->LoginAuthentication(info);
+        if(uid == 0)
         {
             std::cout << info.UserName << " has existed, send ERR msg!" << std::endl;
             ErrMessage errmsg(ERRMSG_NAMEXIST);
@@ -321,8 +371,9 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
         else
         {
             //一条单独的SPLMSG_OK，一条群发welcome
-            assert(!m_pServer->m_selfAttr.UesrName.empty());
-            contents << m_pServer->m_selfAttr.UesrName;
+            m_UID = uid;
+            assert(!m_pServer->m_SelfAttr.UesrName.empty());
+            contents << m_pServer->m_SelfAttr.UesrName;
             length = contents.str().size();
             LoginOkMessage *pLoginOk = new(m_SendBuf) LoginOkMessage(length);
             memcpy(pLoginOk->HostName, contents.str().c_str(), length);
@@ -337,7 +388,7 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
             contents << "Welcome " << info.UserName << " add in!";
             length = contents.str().size();
 
-            ChatMessage *pWelcome = new(m_SendBuf) ChatMessage(length);
+            ChatMessage *pWelcome = new(m_SendBuf) ChatMessage(length, m_UID);
             memcpy(pWelcome->Contents, contents.str().c_str(), length);
             PutOutMsg(pWelcome);
             m_pServer->PushToAll(pWelcome);
@@ -360,22 +411,14 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
     return ret;
 }
 
-bool SimpleServer::CSession::LoginAuthentication(AuthInfo &info)
-{
-    return !m_pServer->CheckNameExisted(info.UserName);
-}
-
-
-
 void SimpleServer::SInputReceiver::OnReceive()
 {
     assert(this);
     assert(m_pServer);
-    std::string line;
-    std::getline(std::cin, line);
-    int length = line.size();
-    ChatMessage *pMsg = new(m_SendBuf) ChatMessage(length);
-    memcpy(pMsg->Contents, line.c_str(), length);
+    std::getline(std::cin, m_LineBuf);
+    assert(m_pServer->m_SelfAttr.UID == 0);
+    ChatMessage *pMsg = new(m_SendBuf) ChatMessage(m_LineBuf.size(), m_pServer->m_SelfAttr.UID);
+    memcpy(pMsg->Contents, m_LineBuf.c_str(), m_LineBuf.size());
     PutOutMsg(pMsg);
     m_pServer->PushToAll(pMsg);
 }

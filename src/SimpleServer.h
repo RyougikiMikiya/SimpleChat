@@ -2,6 +2,7 @@
 #define SIMPLESERVER_H
 
 #include <string>
+#include <map>
 #include <vector>
 
 #include "SimpleMessage.h"
@@ -29,21 +30,16 @@ public:
             assert(this);
             return PostMessage(m_hFD, pMsg);
         }
-        const std::string &GetUserName()const
-        {
-            assert(this);
-            return m_Attr.UesrName;
-        }
+        uint64_t GetUID() const{return m_UID;}
 
     private:
         //function self
-        SimpleMsgHdr *Recevie();
+        const SimpleMsgHdr *Recevie();
         int HandleMessage(const SimpleMsgHdr *pMsg);
-        bool LoginAuthentication(AuthInfo &info);
 
         SimpleServer *m_pServer;
         int m_hFD;
-        UserAttr m_Attr;
+        uint64_t m_UID;
 
         char m_SendBuf[BUF_MAX_LEN];
         char m_RecvBuf[BUF_MAX_LEN];
@@ -58,11 +54,15 @@ public:
 public:
     void OnReceive();
 
-    //fuction for session
 protected:
     void PushToAll(const SimpleMsgHdr *pMsg);
-    bool CheckNameExisted(const std::string &name);
 
+    //function for login
+    uint64_t LoginAuthentication(const AuthInfo &info);
+    uint64_t CheckNameExisted(const std::string &name) const;
+    void RegistUser(UserAttr &info);
+
+private:
     class SInputReceiver : public IReceiver
     {
     public:
@@ -71,22 +71,38 @@ protected:
     private:
         SimpleServer *m_pServer;
         char m_SendBuf[BUF_MAX_LEN];
+        std::string m_LineBuf;
     };
+
+    struct MessageRecord
+    {
+    public:
+        time_t Time;
+        std::string Name;
+        std::string Contents;
+    };
+
 
 private:
     typedef std::vector<CSession*> SessionList;
     typedef SessionList::iterator ListIt;
 
+    typedef std::vector<MessageRecord> RecordList;
+    typedef RecordList::iterator RecordIt;
+
     CSession *OnSessionCreate(int fd);
     void OnSessionFinished(CSession *pSession);
 
-    UserAttr m_selfAttr;
+    UserAttr m_SelfAttr;
     int m_hListenFD;
     int m_Port;
     volatile bool m_bStart;
-    SessionList m_Sessions;
     SimpleListener m_Listener;
     SInputReceiver m_STDIN;
+
+    SessionList m_Sessions;
+    RecordList m_Records;
+    UserList m_Users;
 };
 
 #endif // SIMPLESERVER_H

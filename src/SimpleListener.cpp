@@ -57,12 +57,7 @@ int SimpleListener::Start()
 {
     assert(this);
     int ret = 0;
-    if(m_bStart)
-    {
-        std::cout << "Listener has been activated!" << std::endl;
-        ret = -1;
-        goto ERR;
-    }
+    assert(m_bStart == false);
     assert(m_hEpollRoot >= 0);
     if(m_Receviers.empty())
     {
@@ -83,8 +78,7 @@ int SimpleListener::Start()
     ERR:
 
     std::cout << "Start listener failed" << std::endl;
-    if(m_bStart)
-        m_bStart = false;
+    m_bStart = false;
     return ret;
 }
 

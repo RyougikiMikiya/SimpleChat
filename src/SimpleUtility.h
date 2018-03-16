@@ -5,11 +5,15 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <time.h>
+#include <map>
 
 //这两个类暂时放这里
 struct UserAttr
 {
+    uint64_t UID;
     std::string UesrName;
+    bool bOnline;
     //some ohter attrs
 };
 
@@ -19,9 +23,20 @@ struct AuthInfo
     //....some other
 };
 
+typedef std::map<uint64_t, UserAttr> UserList;
+typedef UserList::iterator UserIt;
+
+
 int readn(int fd, void *pBuf, int n);
 
 int writen(int fd, const void *pBuf, int n);
+
+inline void DisplayTime(const time_t *stamp, char *pRecvBuf)
+{
+    struct tm *t;
+    t = localtime(stamp);
+    sprintf(pRecvBuf, "<%d>:<%d>:<%d>", t->tm_hour, t->tm_min, t->tm_sec);
+}
 
 template<typename T>
 inline char *PutInStream(void *pDest, T &obj)

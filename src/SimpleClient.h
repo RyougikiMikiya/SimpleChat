@@ -22,8 +22,8 @@ private:
     int ConnectHost();
     int Login();
 
-    SimpleMsgHdr *Receive();
-    int HandleMsg(SimpleMsgHdr *pMsg);
+    const SimpleMsgHdr *Receive();
+    int HandleMsg(const SimpleMsgHdr *pMsg);
 
 private:
     UserAttr m_SelfAttr;

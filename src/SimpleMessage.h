@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <cassert>
 #include <errno.h>
-#include <stdint.h>
+#include <cstdint>
 
 #include "SimpleUtility.h"
 
@@ -68,10 +68,14 @@ public:
 struct ChatMessage : public SimpleMsgHdr
 {
 public:
-    ChatMessage (int16_t payloadLen) : SimpleMsgHdr( SPLMSG_CHAT , payloadLen + sizeof(*this))
+    ChatMessage (int16_t payloadLen, uint64_t uid) : SimpleMsgHdr( SPLMSG_CHAT , payloadLen + sizeof(*this)) , UID(uid)
     {
-    // do nothings
+        TimeStamp = time(NULL);
     }
+public:
+
+    time_t TimeStamp;
+    uint64_t UID;
     char Contents[0];
 };
 
