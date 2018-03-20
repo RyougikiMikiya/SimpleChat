@@ -28,7 +28,7 @@ public:
         int Send(const SimpleMsgHdr *pMsg)
         {
             assert(this);
-            return PostMessage(m_hFD, pMsg);
+            return SendMessage(m_hFD, pMsg);
         }
         uint64_t GetUID() const{return m_UID;}
 
@@ -54,8 +54,12 @@ public:
 public:
     void OnReceive();
 
-protected:
+private:
     void PushToAll(const SimpleMsgHdr *pMsg);
+
+    //UI
+    std::string FormatServerText(const ServerText &text);
+    void PrintMsgToScreen(const SimpleMsgHdr *pMsg);
 
     //function for login
     uint64_t LoginAuthentication(const AuthInfo &info);
@@ -82,7 +86,6 @@ private:
         std::string Contents;
     };
 
-
 private:
     typedef std::vector<CSession*> SessionList;
     typedef SessionList::iterator ListIt;
@@ -103,6 +106,11 @@ private:
     SessionList m_Sessions;
     RecordList m_Records;
     UserList m_Users;
+
+
+    //function for log
+private:
+    void PrintAllUser();
 };
 
 #endif // SIMPLESERVER_H

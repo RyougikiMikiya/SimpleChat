@@ -46,6 +46,7 @@ int main(int argc, char **argv)
         SimpleClient client;
         client.Init(argv[1], argv[2], port);
         client.Start();
+        client.Stop();
     }
 
     return 0;

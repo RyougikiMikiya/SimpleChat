@@ -172,9 +172,13 @@ void *SimpleListener::EpollThread(void *param)
             pReceiver = reinterpret_cast<IReceiver*>(events[i].data.ptr);
             assert(pReceiver);
             if(events[i].events == EPOLLIN)
-                std::cout << "Epoll in event!" << std::endl;
+            {
+                //...
+            }
             else if(events[i].events == EPOLLHUP)
-                std::cout << "Epoll Hup event!" << std::endl;
+            {
+                //...
+            }
             pReceiver->OnReceive();
         }
     }

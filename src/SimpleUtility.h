@@ -8,12 +8,25 @@
 #include <time.h>
 #include <map>
 
+struct ClientText
+{
+    uint64_t UID;
+    std::string content;
+};
+
+struct ServerText
+{
+   time_t Time;
+   uint64_t UID;
+   std::string content;
+};
+
 //这两个类暂时放这里
 struct UserAttr
 {
     uint64_t UID;
-    std::string UesrName;
     bool bOnline;
+    std::string UserName;
     //some ohter attrs
 };
 
@@ -25,6 +38,7 @@ struct AuthInfo
 
 typedef std::map<uint64_t, UserAttr> UserList;
 typedef UserList::iterator UserIt;
+typedef UserList::const_iterator UserConstIt;
 
 
 int readn(int fd, void *pBuf, int n);

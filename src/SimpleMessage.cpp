@@ -10,7 +10,7 @@
 #include "SimpleMessage.h"
 
 
-int PostMessage(int fd,const SimpleMsgHdr *pMsg)
+int SendMessage(int fd,const SimpleMsgHdr *pMsg)
 {
     assert(fd >= 0);
     assert(pMsg);
@@ -104,30 +104,89 @@ int RecevieMessage(int fd, void *pBuf, int bufLen)
 
 }
 
-void PutOutMsg(const SimpleMsgHdr *pMsg)
+int RecevieMessage(int fd, SimpleMsgHdr **pMsg)
 {
-    assert(pMsg);
-    assert(pMsg->FrameHead == MSG_FRAME_HEADER);
-    assert(pMsg->Length < BUF_MAX_LEN);
-    switch(pMsg->ID)
+    assert(fd >= 0);
+    int hdrLenth = sizeof(SimpleMsgHdr);
+    char headBuf[hdrLenth];
+    char *pTmp, *pFull;
+    int remain, result;
+    SimpleMsgHdr *pHeader;
+    int ret = 0;
+
+    remain = hdrLenth;
+    result = readn(fd, headBuf, hdrLenth);
+    if(result == 0)
     {
-    case SPLMSG_CHAT :
+        std::cout << "peer close" << std::endl;
+        ret = -1;
+        goto ERR;
+    }
+    else if( result < 0 )
     {
-        const ChatMessage *pFull = static_cast<const ChatMessage*>(pMsg);
-        printf("%.*s\n", pFull->Length , pFull->Contents);
+        ret = -1;
+        goto ERR;
     }
-        break;
-    default:
-        std::cout << "Unkown Message type" << std::endl;
-        break;
+    else if(result != remain)
+    {
+        ret = -1;
+        goto ERR;
     }
+
+    pHeader = reinterpret_cast<SimpleMsgHdr*>(headBuf);
+    if(pHeader->FrameHead != MSG_FRAME_HEADER)
+    {
+        std::cout << "Message frame head is incorrect!" << std::endl;
+        goto ERR;
+    }
+    remain = pHeader->Length;
+    pFull = new char[hdrLenth + remain];
+    printf("%p\n", pFull);
+    if(!pFull)
+    {
+        std::cout << "allocate memory failed" << std::endl;
+        goto ERR;
+    }
+    pTmp = PutInStream(pFull, *pHeader);
+
+    if(remain > 0)
+    {
+        result = readn(fd, pTmp, remain);
+        if(result == 0)
+        {
+            ret = -2;
+            goto ERR;
+        }
+        else if(result < 0)
+        {
+            ret = -1;
+            goto ERR;
+        }
+        else if(result != remain)
+        {
+            ret = -1;
+            goto ERR;
+        }
+    }
+
+    printf("%p\n", pFull);
+    *pMsg = reinterpret_cast<SimpleMsgHdr*>(pFull);
+
+    return result + hdrLenth;
+
+    ERR:
+    if(ret == -1)
+    {
+        perror("recv msg fail!\n");
+    }
+    return ret;
 }
 
 LoginMessage *LoginMessage::Pack(void *pSendBuf,const AuthInfo &info)
 {
     assert(pSendBuf);
     assert(info.UserName.length() < NAME_MAX_LEN);
-    int totalLen = info.UserName.length() + sizeof(int);
+    int totalLen = info.UserName.length();
 
     LoginMessage msg(totalLen);
     SimpleMsgHdr *pHeader = &msg;
@@ -149,10 +208,204 @@ void LoginMessage::Unpack(const SimpleMsgHdr *pRecvBuf, AuthInfo &info)
     assert(pHead->Length > 0);
     //skip header
     pRecvBuf += 1;
-    int inLen = pHead->Length;
-    int outLen = inLen;
-    //get first string lenth & pos
-    const char *pTmp = GetInStream(pRecvBuf, &outLen);
-    assert(outLen < NAME_MAX_LEN);
-    info.UserName.insert(0, pTmp, outLen);
+
+    int totalLen = pHead->Length;
+
+    int nameLen;
+    const char *pTmp = GetInStream(pRecvBuf, &nameLen);
+    totalLen -= sizeof(int);
+
+    info.UserName.insert(0, pTmp, nameLen);
+    totalLen -= nameLen;
+    pTmp += nameLen;
+
+    assert(totalLen == 0);
 }
+
+UserAttrMsg *UserAttrMsg::Create(UserConstIt first, UserConstIt last)
+{
+    assert(first != last);
+
+    int totalLen = 0, curLen = 0;
+    UserAttr attr;
+    int num = 0;
+
+    for(UserConstIt it = first; it != last; ++it)
+    {
+        attr = it->second;
+        curLen = sizeof(attr.UID) + sizeof(attr.bOnline) + sizeof(int) + attr.UserName.length();
+        std::cout << "curLen: " << curLen <<" UID: " <<attr.UID << " " << attr.UserName << std::endl;
+        totalLen += curLen;
+        num++;
+    }
+
+    std::cout <<"NUm :" << num <<" Total len " << totalLen << std::endl;
+
+    char *pTmp = new char[totalLen + sizeof(int) + sizeof(SimpleMsgHdr)];
+    UserAttrMsg *pMsg = new(pTmp) UserAttrMsg(totalLen, num);
+    //point to attrs[0]
+    std::cout << pMsg->Length << " " << totalLen << std::endl;
+    pTmp += (sizeof(SimpleMsgHdr) + sizeof(int));
+
+    for(UserConstIt it = first; it != last; ++it)
+    {
+        attr = it->second;
+        pTmp = PutInStream(pTmp, attr.UID);
+        pTmp = PutInStream(pTmp, attr.bOnline);
+        pTmp = PutStringInStream(pTmp, attr.UserName.c_str(), attr.UserName.length());
+    }
+
+    return pMsg;
+}
+
+void UserAttrMsg::Unpack(const UserAttrMsg *pHead, UserList &list)
+{
+    assert(pHead);
+    assert(pHead->FrameHead == MSG_FRAME_HEADER);
+    assert(pHead->ID == SPLMSG_USERATTR);
+    assert(pHead->Length > 0);
+
+    int num = pHead->Num;
+    int attrLen = 0;
+    int totalLen = pHead->Length - sizeof(int);
+
+    //skip header
+    const char *pTmp = reinterpret_cast<const char*>(pHead);
+    pTmp += (sizeof(SimpleMsgHdr) + sizeof(int));
+
+    UserAttr attr;
+
+    for(int i = 0; i < num; i++)
+    {
+        pTmp = GetInStream(pTmp, &attr.UID);
+        attrLen = sizeof(attr.UID);
+
+        pTmp = GetInStream(pTmp, &attr.bOnline);
+        attrLen += sizeof(attr.bOnline);
+
+        int nameLen;
+        pTmp = GetInStream(pTmp, &nameLen);
+        attrLen += sizeof(int);
+
+        attr.UserName.clear();
+        attr.UserName.insert(0, pTmp, nameLen);
+        pTmp += nameLen;
+        attrLen += nameLen;
+
+        list.insert({attr.UID, attr});
+        totalLen -= attrLen;
+    }
+
+    assert(totalLen == 0);
+
+}
+
+void UserAttrMsg::Destory(UserAttrMsg *pHead)
+{
+    assert(pHead);
+    char *pTmp = reinterpret_cast<char *>(pHead);
+    pHead->~UserAttrMsg();
+    delete [] pTmp;
+}
+
+void ServerChatMsg::SetTimeStamp(ServerChatMsg *pSendBuf, time_t time)
+{
+    assert(pSendBuf);
+    assert(pSendBuf->FrameHead == MSG_FRAME_HEADER);
+    assert(pSendBuf->ID == SPLMSG_CHAT);
+
+    SimpleMsgHdr *pHead = static_cast<SimpleMsgHdr*>(pSendBuf);
+    pHead += 1;
+    PutInStream(pHead, time);
+}
+
+SimpleMsgHdr *ServerChatMsg::Pack(void *pSendBuf, const ServerText &sText)
+{
+    assert(pSendBuf);
+    int len = sText.content.length();
+    assert(len < BUF_MAX_LEN);
+
+    ServerChatMsg msg(len);
+    SimpleMsgHdr *pHeader = &msg;
+
+    char *pTmp = reinterpret_cast<char *>(pSendBuf);
+
+    pTmp = PutInStream(pTmp, *pHeader);
+    pTmp = PutInStream(pTmp, sText.Time);
+    pTmp = PutInStream(pTmp, sText.UID);
+    pTmp = PutStringInStream(pTmp, sText.content.c_str(), static_cast<int>(sText.content.length()));
+    SimpleMsgHdr *pFull = reinterpret_cast<SimpleMsgHdr*>(pSendBuf);
+    return pFull;
+}
+
+void ServerChatMsg::Unpack(const SimpleMsgHdr *pRecvBuf, ServerText &sText)
+{
+    assert(pRecvBuf);
+    const SimpleMsgHdr *pHead = reinterpret_cast<const SimpleMsgHdr*>(pRecvBuf);
+    assert(pHead->FrameHead == MSG_FRAME_HEADER);
+    assert(pHead->ID == SPLMSG_CHAT);
+    assert(pHead->Length > 0);
+
+    pRecvBuf += 1;
+
+    int totalLen = pHead->Length;
+
+    const char *pTmp = GetInStream(pRecvBuf, &sText.Time);
+    totalLen -= sizeof(sText.Time);
+
+    pTmp = GetInStream(pTmp, &sText.UID);
+    totalLen -= sizeof(sText.UID);
+
+    int contentLen;
+    pTmp = GetInStream(pTmp, &contentLen);
+    totalLen -= sizeof(int);
+
+    sText.content.insert(0, pTmp, contentLen);
+    totalLen -= contentLen;
+
+    assert(totalLen == 0);
+}
+
+SimpleMsgHdr *UserInputMsg::Pack(void *pSendBuf, const ClientText &cText)
+{
+    assert(pSendBuf);
+    int len = cText.content.length();
+    assert(len < BUF_MAX_LEN);
+
+    UserInputMsg msg(len);
+    SimpleMsgHdr *pHeader = &msg;
+
+    char *pTmp = reinterpret_cast<char *>(pSendBuf);
+
+    pTmp = PutInStream(pTmp, *pHeader);
+    pTmp = PutInStream(pTmp, cText.UID);
+    pTmp = PutStringInStream(pTmp, cText.content.c_str(), static_cast<int>(cText.content.length()));
+    SimpleMsgHdr *pFull = reinterpret_cast<SimpleMsgHdr*>(pSendBuf);
+    return pFull;
+}
+
+void UserInputMsg::Unpack(const SimpleMsgHdr *pRecvBuf, ClientText &cText)
+{
+    assert(pRecvBuf);
+    const SimpleMsgHdr *pHead = reinterpret_cast<const SimpleMsgHdr*>(pRecvBuf);
+    assert(pHead->FrameHead == MSG_FRAME_HEADER);
+    assert(pHead->ID == SPLMSG_USERINPUT);
+    assert(pHead->Length > 0);
+
+    pRecvBuf += 1;
+
+    int totalLen = pHead->Length;
+
+    const char *pTmp = GetInStream(pRecvBuf, &cText.UID);
+    totalLen -= sizeof(cText.UID);
+
+    int contentLen;
+    pTmp = GetInStream(pTmp, &contentLen);
+    totalLen -= sizeof(int);
+
+    cText.content.insert(0, pTmp, contentLen);
+    totalLen -= contentLen;
+
+    assert(totalLen == 0);
+}
+

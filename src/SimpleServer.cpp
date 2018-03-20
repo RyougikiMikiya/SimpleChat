@@ -24,9 +24,11 @@ int SimpleServer::Init(const char *pName, int port)
     assert(this);
     assert(pName);
     assert(m_hListenFD < 0);
-    m_SelfAttr.UesrName = pName;
-    assert(!m_SelfAttr.UesrName.empty());
-    m_SelfAttr.UID = sUID++;
+    m_SelfAttr.UserName = pName;
+    assert(!m_SelfAttr.UserName.empty());
+    m_SelfAttr.UID = sUID;
+    sUID++;
+
     m_Port = port;
     int ret;
     int on = 1;
@@ -71,6 +73,10 @@ int SimpleServer::Init(const char *pName, int port)
         ret = -4;
         goto ERR;
     }
+
+    m_SelfAttr.bOnline = true;
+    m_Users.insert({m_SelfAttr.UID, m_SelfAttr});
+
     return 0;
 
     ERR:
@@ -197,12 +203,48 @@ void SimpleServer::PushToAll(const SimpleMsgHdr *pMsg)
     }
 }
 
+std::string SimpleServer::FormatServerText(const ServerText &text)
+{
+    UserIt it = m_Users.find(text.UID);
+    assert(it != m_Users.end());
+    std::stringstream stream;
+    stream << it->second.UserName << ':';
+    stream << text.content;
+    stream << std::endl;
+    struct tm *pTime = localtime(&text.Time);
+    stream << "    <" <<pTime->tm_hour << ">:";
+    stream << '<' <<pTime->tm_min << ">.";
+    stream << '<' <<pTime->tm_sec << ">";
+    return stream.str();
+}
+
+void SimpleServer::PrintMsgToScreen(const SimpleMsgHdr *pMsg)
+{
+    assert(pMsg);
+    assert(pMsg->FrameHead == MSG_FRAME_HEADER);
+    assert(pMsg->Length < BUF_MAX_LEN);
+
+    switch(pMsg->ID)
+    {
+    case SPLMSG_CHAT :
+    {
+        ServerText text;
+        ServerChatMsg::Unpack(pMsg, text);
+        std::cout << FormatServerText(text) << std::endl;
+    }
+        break;
+    default:
+        std::cout << "Unkown Message type" << std::endl;
+        break;
+    }
+}
+
 uint64_t SimpleServer::LoginAuthentication(const AuthInfo &info)
 {
     assert(sUID != 0);
 
     //a lot of operation
-    if(info.UserName == m_SelfAttr.UesrName)
+    if(info.UserName == m_SelfAttr.UserName)
         return 0;
 
     uint64_t uid = CheckNameExisted(info.UserName);
@@ -211,9 +253,15 @@ uint64_t SimpleServer::LoginAuthentication(const AuthInfo &info)
         std::cout << "old in" << std::endl;
         UserIt it = m_Users.find(uid);
         assert(it != m_Users.end());
-        assert(!it->second.bOnline);
-        it->second.bOnline = true;
-        return uid;
+        if(it->second.bOnline)
+        {
+            return 0;
+        }
+        else
+        {
+            it->second.bOnline = true;
+            return uid;
+        }
     }
     else
     {
@@ -222,7 +270,7 @@ uint64_t SimpleServer::LoginAuthentication(const AuthInfo &info)
         attr.UID = sUID;
         sUID++;
         attr.bOnline = true;
-        attr.UesrName = info.UserName;
+        attr.UserName = info.UserName;
         m_Users.insert({attr.UID, attr});
         return attr.UID;
     }
@@ -236,7 +284,7 @@ uint64_t SimpleServer::CheckNameExisted(const std::string &name) const
 {
     UserList::const_iterator it = std::find_if(m_Users.cbegin(), m_Users.cend(), [&name](const UserList::value_type &pair)
     {
-            return pair.second.UesrName == name;
+            return pair.second.UserName == name;
     });
 
     return it != m_Users.cend() ? it->second.UID : 0;
@@ -279,6 +327,15 @@ void SimpleServer::OnSessionFinished(SimpleServer::CSession *pSession)
     delete pSession;
 }
 
+void SimpleServer::PrintAllUser()
+{
+    for(UserList::value_type pair : m_Users)
+    {
+        std::cout << "UID: " << pair.first << std::endl << "User name: " << pair.second.UserName << std::endl \
+                  << "User online: " << std::boolalpha <<pair.second.bOnline << std::endl;
+    }
+}
+
 SimpleServer::CSession::CSession(SimpleServer *pHost, int fd) : m_pServer(pHost),
     m_hFD(fd),  m_UID(0)
 {
@@ -294,6 +351,7 @@ SimpleServer::CSession::~CSession()
 void SimpleServer::CSession::OnReceive()
 {
     assert(this);
+
     const SimpleMsgHdr *pMsg = Recevie();
     if(!pMsg)
     {
@@ -333,6 +391,7 @@ int SimpleServer::CSession::Destory()
 
 const SimpleMsgHdr *SimpleServer::CSession::Recevie()
 {
+#if 0
     int ret = RecevieMessage(m_hFD, m_RecvBuf, BUF_MAX_LEN);
     if(ret < 0)
     {
@@ -342,6 +401,14 @@ const SimpleMsgHdr *SimpleServer::CSession::Recevie()
 
     const SimpleMsgHdr *pMsg = reinterpret_cast<const SimpleMsgHdr*>(m_RecvBuf);
     assert(pMsg->FrameHead == MSG_FRAME_HEADER);
+#else
+    SimpleMsgHdr *pMsg;
+    int ret = RecevieMessage(m_hFD, &pMsg);
+    if(ret < 0)
+        pMsg = NULL;
+    printf("%p\n", pMsg);
+    assert(pMsg->FrameHead == MSG_FRAME_HEADER);
+#endif
     return pMsg;
 }
 
@@ -349,8 +416,6 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
 {
     assert(pMsg && m_pServer);
     int ret;
-    std::stringstream contents;
-    int length;
 
     switch(pMsg->ID)
     {
@@ -358,7 +423,7 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
     {
         assert(m_UID == 0);
         AuthInfo info;
-        LoginMessage::Unpack(reinterpret_cast<const SimpleMsgHdr*>(m_RecvBuf), info);
+        LoginMessage::Unpack(reinterpret_cast<const SimpleMsgHdr*>(pMsg), info);
         assert(info.UserName.length() > 0);
         std::cout << info.UserName << " request login!" << std::endl;
         uint64_t uid= m_pServer->LoginAuthentication(info);
@@ -372,39 +437,39 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
         {
             //一条单独的SPLMSG_OK，一条群发welcome
             m_UID = uid;
-            assert(!m_pServer->m_SelfAttr.UesrName.empty());
-            contents << m_pServer->m_SelfAttr.UesrName;
-            length = contents.str().size();
-            LoginOkMessage *pLoginOk = new(m_SendBuf) LoginOkMessage(length);
-            memcpy(pLoginOk->HostName, contents.str().c_str(), length);
-            ret = Send(pLoginOk);
-            pLoginOk->~LoginOkMessage();
+            UserIt it = m_pServer->m_Users.find(m_UID);
+            assert(it != m_pServer->m_Users.end());
+            LoginOkMessage pLoginOk(uid);
+            ret = Send(&pLoginOk);
             if(ret < 0)
                 return -1;
 
-            contents.clear();
-            contents.str("");
+            //有新的登录后应该发一条消息通知所有人，假如是新加入用户登录则发DataMsg->UserAttrMsg，更新所有在线客户端缓存
+            //如果是老用户加入，则发另一条消息告诉所有人把他的online置位
 
-            contents << "Welcome " << info.UserName << " add in!";
-            length = contents.str().size();
-
-            ChatMessage *pWelcome = new(m_SendBuf) ChatMessage(length, m_UID);
-            memcpy(pWelcome->Contents, contents.str().c_str(), length);
-            PutOutMsg(pWelcome);
-            m_pServer->PushToAll(pWelcome);
-            pWelcome->~ChatMessage();
+            UserAttrMsg *pMsg = UserAttrMsg::Create(m_pServer->m_Users.begin(), m_pServer->m_Users.end());
+            UserList tmpList;
+            UserAttrMsg::Unpack(pMsg, tmpList);
+            for(auto & p : tmpList)
+            {
+                std::cout << p.first << " " << p.second.UserName << std::endl;
+            }
+            UserAttrMsg::Destory(pMsg);
         }
     }
         break;
-    case SPLMSG_CHAT:
+    case SPLMSG_USERINPUT:
     {
-        const ChatMessage *pText = static_cast<const ChatMessage*>(pMsg);
-        PutOutMsg(pText);
-        m_pServer->PushToAll(pText);
+        ClientText cText;
+        UserInputMsg::Unpack(pMsg, cText);
+        ServerText sText{time(NULL), cText.UID, cText.content};
+        SimpleMsgHdr *pChat = ServerChatMsg::Pack(m_SendBuf, sText);
+        m_pServer->PrintMsgToScreen(pChat);
+        m_pServer->PushToAll(pChat);
     }
         break;
     default:
-        std::cout << "Unkown Message Type!" << std::endl;
+        std::cout << "Server session recv Unkown Message Type: " << std::hex << pMsg->ID <<std::endl;
         break;
 
     }
@@ -417,8 +482,8 @@ void SimpleServer::SInputReceiver::OnReceive()
     assert(m_pServer);
     std::getline(std::cin, m_LineBuf);
     assert(m_pServer->m_SelfAttr.UID == 0);
-    ChatMessage *pMsg = new(m_SendBuf) ChatMessage(m_LineBuf.size(), m_pServer->m_SelfAttr.UID);
-    memcpy(pMsg->Contents, m_LineBuf.c_str(), m_LineBuf.size());
-    PutOutMsg(pMsg);
+    ServerText text{time(NULL), m_pServer->m_SelfAttr.UID, m_LineBuf};
+    SimpleMsgHdr *pMsg = ServerChatMsg::Pack(m_SendBuf, text);
+    m_pServer->PrintMsgToScreen(pMsg);
     m_pServer->PushToAll(pMsg);
 }

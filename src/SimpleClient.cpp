@@ -16,7 +16,7 @@
 
 #include "SimpleClient.h"
 
-SimpleClient::SimpleClient() : m_hSocket(-1), m_Port(-1), m_HostIP(0), m_bWork(false)
+SimpleClient::SimpleClient() : m_hSocket(-1), m_Port(-1), m_HostIP(0), m_bWork(false), m_STDIN(this)
 {
 
 }
@@ -30,7 +30,7 @@ int SimpleClient::Init(const char *pName, const char *pIP, int port)
     int ret;
     std::string name(pName);
     m_Port = port;
-    m_SelfAttr.UesrName = name;
+    m_SelfAttr.UserName = name;
     int on = 1;
 
     ret = inet_pton(AF_INET, pIP, &m_HostIP);
@@ -74,29 +74,38 @@ int SimpleClient::Start()
     ret = ConnectHost();
     if(ret < 0)
         goto ERR;
+
+    ret = m_Listener.RegisterRecevier(STDIN_FILENO, &m_STDIN);
+    if(ret < 0)
+        goto ERR;
+
     ret = m_Listener.RegisterRecevier(m_hSocket, this);
     if(ret < 0)
         goto ERR;
+
     ret = Login();
     if(ret == 0)
     {
-        m_bWork = true;
-        while(m_bWork)
-        {
-            OnReceive();
-        }
+        m_Listener.Start();
     }
     else
     {
         std::cout << "Login failed" << std::endl;
     }
-    //remove..
+
+    //remove...
     return 0;
     ERR:
     std::cout << "Start client failed" << std::endl;
     close(m_hSocket);
     m_hSocket = -1;
     return -1;
+}
+
+int SimpleClient::Stop()
+{
+    assert(this);
+    return m_Listener.Stop();
 }
 
 void SimpleClient::OnReceive()
@@ -133,10 +142,10 @@ int SimpleClient::ConnectHost()
 
 int SimpleClient::Login()
 {
-    assert(m_SelfAttr.UesrName.size() > 0);
-    AuthInfo info{m_SelfAttr.UesrName};
-    LoginMessage *pMsg = LoginMessage::Pack(m_SendBuf, info);
-    int ret = PostMessage(m_hSocket, pMsg);
+    assert(m_SelfAttr.UserName.size() > 0);
+    AuthInfo info{m_SelfAttr.UserName};
+    LoginMessage *pLoginMsg = LoginMessage::Pack(m_SendBuf, info);
+    int ret = Send(pLoginMsg);
     if(ret < 0)
     {
 
@@ -146,6 +155,47 @@ int SimpleClient::Login()
     if(ret != HANDLEMSGRESULT_LOGINAUTHSUCCESS)
         return -1;
     return 0;
+}
+
+int SimpleClient::ReceiveUserAttr(int sum)
+{
+    return 0;
+}
+
+void SimpleClient::PrintMsgToScreen(const SimpleMsgHdr *pMsg)
+{
+    assert(pMsg);
+    assert(pMsg->FrameHead == MSG_FRAME_HEADER);
+    assert(pMsg->Length < BUF_MAX_LEN);
+
+    switch(pMsg->ID)
+    {
+    case SPLMSG_CHAT :
+    {
+        ServerText text;
+        ServerChatMsg::Unpack(pMsg, text);
+        std::cout << FormatClientText(text) << std::endl;
+    }
+        break;
+    default:
+        std::cout << "Unkown Message type" << std::endl;
+        break;
+    }
+}
+
+std::string SimpleClient::FormatClientText(const ServerText &text)
+{
+    UserIt it = m_Users.find(text.UID);
+    assert(it != m_Users.end());
+    std::stringstream stream;
+    stream << it->second.UserName << ':';
+    stream << text.content;
+    stream << std::endl;
+    struct tm *pTime = localtime(&text.Time);
+    stream << "    <" <<pTime->tm_hour << ">:";
+    stream << '<' <<pTime->tm_min << ">.";
+    stream << '<' <<pTime->tm_sec << ">";
+    return stream.str();
 }
 
 const SimpleMsgHdr *SimpleClient::Receive()
@@ -168,10 +218,17 @@ int SimpleClient::HandleMsg(const SimpleMsgHdr *pMsg)
     switch(pMsg->ID)
     {
     case SPLMSG_LOGIN_OK:
+    {
+        std::cout << "Login success!" << std::endl;
+        const LoginOkMessage *pLogin = static_cast<const LoginOkMessage*>(pMsg);
+        assert(pLogin->UID != 0);
+        m_SelfAttr.UID = pLogin->UID;
         return HANDLEMSGRESULT_LOGINAUTHSUCCESS;
+    }
+        break;
     case SPLMSG_CHAT:
     {
-        PutOutMsg(pMsg);
+        PrintMsgToScreen(pMsg);
     }
         break;
     case SPLMSG_ERR:
@@ -179,8 +236,24 @@ int SimpleClient::HandleMsg(const SimpleMsgHdr *pMsg)
 
     }
         break;
+    case SPLMSG_USERATTR:
+    {
+
+    }
+        break;
     default:
-        std::cout << "Unknown Message type!" << std::endl;
+        std::cout << "Client recv Unknown Message type!" << std::endl;
     }
     return 0;
+}
+
+void SimpleClient::CInputReceiver::OnReceive()
+{
+    assert(this);
+    assert(m_pClient);
+    std::getline(std::cin, m_LineBuf);
+    assert(m_pClient->m_SelfAttr.UID != 0);
+    ClientText cText{m_pClient->m_SelfAttr.UID, m_LineBuf};
+    SimpleMsgHdr *pInputMsg = UserInputMsg::Pack(m_SendBuf, cText);
+    m_pClient->Send(pInputMsg);
 }
