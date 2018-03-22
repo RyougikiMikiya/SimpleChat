@@ -355,9 +355,11 @@ void SimpleServer::CSession::OnReceive()
     const SimpleMsgHdr *pMsg = Recevie();
     if(!pMsg)
     {
+        m_pServer->OnSessionFinished(this);
         return;
     }
     HandleMessage(pMsg);
+    DestoryRecvMessage(pMsg);
 }
 
 int SimpleServer::CSession::Create()
@@ -391,24 +393,13 @@ int SimpleServer::CSession::Destory()
 
 const SimpleMsgHdr *SimpleServer::CSession::Recevie()
 {
-#if 0
-    int ret = RecevieMessage(m_hFD, m_RecvBuf, BUF_MAX_LEN);
-    if(ret < 0)
-    {
-        m_pServer->OnSessionFinished(this);
-        return NULL;
-    }
-
-    const SimpleMsgHdr *pMsg = reinterpret_cast<const SimpleMsgHdr*>(m_RecvBuf);
-    assert(pMsg->FrameHead == MSG_FRAME_HEADER);
-#else
-    SimpleMsgHdr *pMsg;
+    SimpleMsgHdr *pMsg = NULL;
     int ret = RecevieMessage(m_hFD, &pMsg);
     if(ret < 0)
-        pMsg = NULL;
-    printf("%p\n", pMsg);
+    {
+        return NULL;
+    }
     assert(pMsg->FrameHead == MSG_FRAME_HEADER);
-#endif
     return pMsg;
 }
 
@@ -435,7 +426,7 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
         }
         else
         {
-            //一条单独的SPLMSG_OK，一条群发welcome
+            //一条单独的SPLMSG_OK
             m_UID = uid;
             UserIt it = m_pServer->m_Users.find(m_UID);
             assert(it != m_pServer->m_Users.end());
@@ -446,15 +437,13 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
 
             //有新的登录后应该发一条消息通知所有人，假如是新加入用户登录则发DataMsg->UserAttrMsg，更新所有在线客户端缓存
             //如果是老用户加入，则发另一条消息告诉所有人把他的online置位
+            UserAttrMsg *pAttrMsg = UserAttrMsg::Create(m_pServer->m_Users.begin(), m_pServer->m_Users.end());
+            Send(pAttrMsg);
+            UserAttrMsg::Destory(pAttrMsg);
 
-            UserAttrMsg *pMsg = UserAttrMsg::Create(m_pServer->m_Users.begin(), m_pServer->m_Users.end());
-            UserList tmpList;
-            UserAttrMsg::Unpack(pMsg, tmpList);
-            for(auto & p : tmpList)
-            {
-                std::cout << p.first << " " << p.second.UserName << std::endl;
-            }
-            UserAttrMsg::Destory(pMsg);
+            UserAttr attr = it->second;
+            LoginNoticeMsg *pNotice = LoginNoticeMsg::Pack(m_SendBuf, attr);
+            m_pServer->PushToAll(pNotice);
         }
     }
         break;
@@ -464,6 +453,7 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
         UserInputMsg::Unpack(pMsg, cText);
         ServerText sText{time(NULL), cText.UID, cText.content};
         SimpleMsgHdr *pChat = ServerChatMsg::Pack(m_SendBuf, sText);
+        m_pServer->m_Records.push_back(sText);
         m_pServer->PrintMsgToScreen(pChat);
         m_pServer->PushToAll(pChat);
     }
@@ -481,9 +471,16 @@ void SimpleServer::SInputReceiver::OnReceive()
     assert(this);
     assert(m_pServer);
     std::getline(std::cin, m_LineBuf);
+    if(std::cin.eof())
+    {
+        //other quit operation
+        m_pClient->m_Listener.UnRegisterRecevier(STDIN_FILENO, this);
+        return;
+    }
     assert(m_pServer->m_SelfAttr.UID == 0);
     ServerText text{time(NULL), m_pServer->m_SelfAttr.UID, m_LineBuf};
     SimpleMsgHdr *pMsg = ServerChatMsg::Pack(m_SendBuf, text);
+    m_pServer->m_Records.push_back(text);
     m_pServer->PrintMsgToScreen(pMsg);
     m_pServer->PushToAll(pMsg);
 }

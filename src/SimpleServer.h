@@ -78,19 +78,11 @@ private:
         std::string m_LineBuf;
     };
 
-    struct MessageRecord
-    {
-    public:
-        time_t Time;
-        std::string Name;
-        std::string Contents;
-    };
-
 private:
     typedef std::vector<CSession*> SessionList;
     typedef SessionList::iterator ListIt;
 
-    typedef std::vector<MessageRecord> RecordList;
+    typedef std::vector<ServerText> RecordList;
     typedef RecordList::iterator RecordIt;
 
     CSession *OnSessionCreate(int fd);

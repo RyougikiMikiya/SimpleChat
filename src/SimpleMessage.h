@@ -24,6 +24,7 @@ enum MessageID
     SPLMSG_OK = 0xCAFE,
     SPLMSG_LOGIN,
     SPLMSG_LOGIN_OK,
+    SPLMSG_LOGIN_NOTICE,
     SPLMSG_USERINPUT,
     SPLMSG_CHAT,
     SPLMSG_ERR,
@@ -60,9 +61,6 @@ protected:
     {
         assert(Length >=0 );
         ID = static_cast< uint16_t >( msgID );
-        if(ID != SPLMSG_USERATTR)
-            assert((Length +sizeof(*this)) < BUF_MAX_LEN );
-
     }
 };
 
@@ -70,6 +68,7 @@ protected:
 
 struct LoginMessage : public SimpleMsgHdr
 {
+public:
     static LoginMessage *Pack(void *pSendBuf,const AuthInfo &info);
     static void Unpack(const SimpleMsgHdr *pRecvBuf, AuthInfo &info);
 
@@ -77,10 +76,16 @@ private:
     //len 表示string所包含字符串长度，下同
     LoginMessage (int16_t len) : SimpleMsgHdr( SPLMSG_LOGIN , len + sizeof(int) + sizeof(SimpleMsgHdr))
     {
-    // do nothings
+        assert(Length <= BUF_MAX_LEN);
     }
 
-    AuthInfo Info;
+    /*
+     * Message contents has a AuthInfo like this.
+     *
+     * int : string length
+     * char[] : AuthInfo.UserName
+    */
+//    AuthInfo Info;
 };
 
 struct LoginOkMessage : public SimpleMsgHdr
@@ -103,12 +108,21 @@ public:
 
 
 private:
-    UserInputMsg (int64_t len) : SimpleMsgHdr( SPLMSG_USERINPUT, len + sizeof(TextContent.UID) + sizeof(int) + sizeof(SimpleMsgHdr) )
+    //len表示内部变长的string长度
+    UserInputMsg (int64_t len) : SimpleMsgHdr( SPLMSG_USERINPUT, len + sizeof(uint64_t) + sizeof(int) + sizeof(SimpleMsgHdr) )
     {
-        //do nothing
+        assert(Length <= BUF_MAX_LEN);
     }
 
-    ClientText TextContent;
+    /*
+     * Message contents has a ClientText like this.
+     *
+     * uint64_t : ClientText.UID
+     * int : string length
+     * char[] : ServerText.content
+    */
+
+//    ClientText TextContent;
 };
 
 struct ServerChatMsg : public SimpleMsgHdr
@@ -120,13 +134,20 @@ public:
     static void Unpack(const SimpleMsgHdr *pRecvBuf, ServerText &sText);
 
 private:
-    ServerChatMsg (int16_t len) : SimpleMsgHdr( SPLMSG_CHAT , len + sizeof(TextContent.Time)
-                                                            + sizeof(TextContent.UID) + sizeof(int) + sizeof(SimpleMsgHdr))
+    ServerChatMsg (int16_t len) : SimpleMsgHdr( SPLMSG_CHAT , len + sizeof(time_t)
+                                                            + sizeof(uint64_t) + sizeof(int) + sizeof(SimpleMsgHdr))
     {
-        //do nothing
+        assert(Length <= BUF_MAX_LEN);
     }
 
-    ServerText TextContent;
+    /*
+     * Message contents has a ServerText like this.
+     *
+     * time_t : ServerText.Time
+     * uint64_t : ServerText.UID
+     * int : string length
+     * char[] : ServerText.content
+    */
 };
 
 struct ErrMessage : public SimpleMsgHdr
@@ -146,7 +167,6 @@ public:
     DataMsgHead(int sum, DataMsgType type) : SimpleMsgHdr(SPLMSG_DATAHEAD, sizeof(*this)) ,
         Sum(sum)
     {
-        //do nothings
         DataType = static_cast< uint16_t >( type );
     }
 
@@ -170,14 +190,49 @@ private:
         //nothing
     }
 
-    UserAttr attrs[0];
+    /*
+     * a sequence of UserAttr , the number = Num.
+     * one UserAttr like:
+     * uint64_t : UserAttr.UID
+     * bool : UserAttr.bOnline
+     * int : string lenth
+     * char[] : string
+    */
+
+//    UserAttr attrs[0];
+};
+
+struct LoginNoticeMsg : public SimpleMsgHdr
+{
+public:
+    static LoginNoticeMsg *Pack(void *pSendBuf,const UserAttr &attr);
+    static void Unpack(const SimpleMsgHdr *pMsgHeader, UserAttr &attr);
+
+private:
+    //len 表示string所包含字符串长度，下同
+    LoginNoticeMsg (int16_t len) : SimpleMsgHdr( SPLMSG_LOGIN_NOTICE , len + sizeof(uint64_t) + sizeof(bool) + sizeof(int) + sizeof(SimpleMsgHdr))
+    {
+        assert(Length <= BUF_MAX_LEN);
+    }
+
+    /*
+     * Contents has one UserAttr like
+     * uint64_t : UserAttr.UID
+     * bool : UserAttr.bOnline
+     * int : string lenth
+     * char[] : string
+    */
+
+//    UserAttr attr
 };
 
 //return 0 if pBuf is not enough. return -1 fd is invaild. return -2 peer close?
 //success return headerLenth + payloadLenth
-int RecevieMessage(int fd, void *pBuf, int bufLen);
+int RecevieMessageOLD(int fd, void *pBuf, int bufLen);
 
 int RecevieMessage(int fd, SimpleMsgHdr **pMsg);
+
+void DestoryRecvMessage(const SimpleMsgHdr *pMsg);
 
 int SendMessage(int fd,const SimpleMsgHdr*pMsg);
 

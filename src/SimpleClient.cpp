@@ -93,6 +93,7 @@ int SimpleClient::Start()
         std::cout << "Login failed" << std::endl;
     }
 
+    m_bWork = true;
     //remove...
     return 0;
     ERR:
@@ -113,8 +114,13 @@ void SimpleClient::OnReceive()
     assert(this);
     const SimpleMsgHdr *pMsg = Receive();
     if(!pMsg)
+    {
+        m_Listener.UnRegisterRecevier(m_hSocket, this);
+        m_bWork = false;
         return;
+    }
     int ret = HandleMsg(pMsg);
+    DestoryRecvMessage(pMsg);
     if(ret < 0)
         m_bWork = false;
 }
@@ -151,18 +157,18 @@ int SimpleClient::Login()
 
     }
     const SimpleMsgHdr *pResp = Receive();
+    if(!pResp)
+    {
+        return -1;
+    }
     ret = HandleMsg(pResp);
+    DestoryRecvMessage(pResp);
     if(ret != HANDLEMSGRESULT_LOGINAUTHSUCCESS)
         return -1;
     return 0;
 }
 
-int SimpleClient::ReceiveUserAttr(int sum)
-{
-    return 0;
-}
-
-void SimpleClient::PrintMsgToScreen(const SimpleMsgHdr *pMsg)
+void SimpleClient::PrintMsgToScreen(const SimpleMsgHdr *pMsg) const
 {
     assert(pMsg);
     assert(pMsg->FrameHead == MSG_FRAME_HEADER);
@@ -183,10 +189,10 @@ void SimpleClient::PrintMsgToScreen(const SimpleMsgHdr *pMsg)
     }
 }
 
-std::string SimpleClient::FormatClientText(const ServerText &text)
+std::string SimpleClient::FormatClientText(const ServerText &text) const
 {
-    UserIt it = m_Users.find(text.UID);
-    assert(it != m_Users.end());
+    UserConstIt it = m_Users.find(text.UID);
+    assert(it != m_Users.cend());
     std::stringstream stream;
     stream << it->second.UserName << ':';
     stream << text.content;
@@ -200,13 +206,13 @@ std::string SimpleClient::FormatClientText(const ServerText &text)
 
 const SimpleMsgHdr *SimpleClient::Receive()
 {
-    int ret = RecevieMessage(m_hSocket, m_RecvBuf, BUF_MAX_LEN);
+    SimpleMsgHdr *pMsg;
+    int ret = RecevieMessage(m_hSocket, &pMsg);
     if(ret < 0)
     {
         //..server close
         return NULL;
     }
-    const SimpleMsgHdr *pMsg = reinterpret_cast<const SimpleMsgHdr*>(m_RecvBuf);
     assert(pMsg->FrameHead == MSG_FRAME_HEADER);
     return pMsg;
 }
@@ -226,6 +232,15 @@ int SimpleClient::HandleMsg(const SimpleMsgHdr *pMsg)
         return HANDLEMSGRESULT_LOGINAUTHSUCCESS;
     }
         break;
+    case SPLMSG_LOGIN_NOTICE:
+    {
+        UserAttr attr;
+        LoginNoticeMsg::Unpack(pMsg, attr);
+        if(attr.UID == m_SelfAttr.UID)
+            break;
+        m_Users.insert({attr.UID, attr});
+    }
+        break;
     case SPLMSG_CHAT:
     {
         PrintMsgToScreen(pMsg);
@@ -238,7 +253,7 @@ int SimpleClient::HandleMsg(const SimpleMsgHdr *pMsg)
         break;
     case SPLMSG_USERATTR:
     {
-
+        UserAttrMsg::Unpack(static_cast<const UserAttrMsg*>(pMsg), m_Users);
     }
         break;
     default:
@@ -252,6 +267,12 @@ void SimpleClient::CInputReceiver::OnReceive()
     assert(this);
     assert(m_pClient);
     std::getline(std::cin, m_LineBuf);
+    if(std::cin.eof())
+    {
+        //other quit operation
+        m_pClient->m_Listener.UnRegisterRecevier(STDIN_FILENO, this);
+        return;
+    }
     assert(m_pClient->m_SelfAttr.UID != 0);
     ClientText cText{m_pClient->m_SelfAttr.UID, m_LineBuf};
     SimpleMsgHdr *pInputMsg = UserInputMsg::Pack(m_SendBuf, cText);

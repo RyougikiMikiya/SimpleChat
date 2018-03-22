@@ -24,7 +24,7 @@ int SendMessage(int fd,const SimpleMsgHdr *pMsg)
     return ret;
 }
 
-int RecevieMessage(int fd, void *pBuf, int bufLen)
+int RecevieMessageOLD(int fd, void *pBuf, int bufLen)
 {
     assert(fd >= 0);
     assert(pBuf);
@@ -119,7 +119,7 @@ int RecevieMessage(int fd, SimpleMsgHdr **pMsg)
     if(result == 0)
     {
         std::cout << "peer close" << std::endl;
-        ret = -1;
+        ret = -2;
         goto ERR;
     }
     else if( result < 0 )
@@ -141,7 +141,6 @@ int RecevieMessage(int fd, SimpleMsgHdr **pMsg)
     }
     remain = pHeader->Length;
     pFull = new char[hdrLenth + remain];
-    printf("%p\n", pFull);
     if(!pFull)
     {
         std::cout << "allocate memory failed" << std::endl;
@@ -169,7 +168,6 @@ int RecevieMessage(int fd, SimpleMsgHdr **pMsg)
         }
     }
 
-    printf("%p\n", pFull);
     *pMsg = reinterpret_cast<SimpleMsgHdr*>(pFull);
 
     return result + hdrLenth;
@@ -181,6 +179,14 @@ int RecevieMessage(int fd, SimpleMsgHdr **pMsg)
     }
     return ret;
 }
+
+void DestoryRecvMessage(const SimpleMsgHdr *pMsg)
+{
+    assert(pMsg);
+    const char *pTmp = reinterpret_cast<const char*>(pMsg);
+    delete [] pTmp;
+}
+
 
 LoginMessage *LoginMessage::Pack(void *pSendBuf,const AuthInfo &info)
 {
@@ -234,17 +240,13 @@ UserAttrMsg *UserAttrMsg::Create(UserConstIt first, UserConstIt last)
     {
         attr = it->second;
         curLen = sizeof(attr.UID) + sizeof(attr.bOnline) + sizeof(int) + attr.UserName.length();
-        std::cout << "curLen: " << curLen <<" UID: " <<attr.UID << " " << attr.UserName << std::endl;
         totalLen += curLen;
         num++;
     }
 
-    std::cout <<"NUm :" << num <<" Total len " << totalLen << std::endl;
-
     char *pTmp = new char[totalLen + sizeof(int) + sizeof(SimpleMsgHdr)];
     UserAttrMsg *pMsg = new(pTmp) UserAttrMsg(totalLen, num);
     //point to attrs[0]
-    std::cout << pMsg->Length << " " << totalLen << std::endl;
     pTmp += (sizeof(SimpleMsgHdr) + sizeof(int));
 
     for(UserConstIt it = first; it != last; ++it)
@@ -409,3 +411,49 @@ void UserInputMsg::Unpack(const SimpleMsgHdr *pRecvBuf, ClientText &cText)
     assert(totalLen == 0);
 }
 
+LoginNoticeMsg *LoginNoticeMsg::Pack(void *pSendBuf, const UserAttr &attr)
+{
+    assert(pSendBuf);
+    assert(attr.UserName.length()!= 0);
+    LoginNoticeMsg msg(attr.UserName.length());
+    SimpleMsgHdr *pHeader = &msg;
+    char *pTmp = reinterpret_cast<char*>(pSendBuf);
+
+    pTmp = PutInStream(pTmp, *pHeader);
+    pTmp = PutInStream(pTmp, attr.UID);
+    pTmp = PutInStream(pTmp, attr.bOnline);
+    pTmp = PutStringInStream(pTmp, attr.UserName.c_str(), attr.UserName.length());
+    LoginNoticeMsg *pFull = reinterpret_cast<LoginNoticeMsg*>(pSendBuf);
+
+    return pFull;
+}
+
+void LoginNoticeMsg::Unpack(const SimpleMsgHdr *pMsgHeader, UserAttr &attr)
+{
+    assert(pMsgHeader);
+    assert(pMsgHeader->FrameHead == MSG_FRAME_HEADER);
+    assert(pMsgHeader->ID == SPLMSG_LOGIN_NOTICE);
+    assert(pMsgHeader->Length > 0);
+
+    int totalLen = pMsgHeader->Length;
+
+    //skip header
+    pMsgHeader += 1;
+
+    const char *pTmp = reinterpret_cast<const char*>(pMsgHeader);
+    pTmp = GetInStream(pTmp, &attr.UID);
+    totalLen -= sizeof(sizeof(attr.UID));
+
+    pTmp = GetInStream(pTmp, &attr.bOnline);
+    totalLen -= sizeof(attr.bOnline);
+
+    int nameLen;
+    pTmp = GetInStream(pTmp, &nameLen);
+    totalLen -= sizeof(int);
+
+    attr.UserName.insert(0, pTmp, nameLen);
+    pTmp += nameLen;
+    totalLen -= nameLen;
+
+    assert(totalLen == 0);
+}

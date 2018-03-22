@@ -22,10 +22,9 @@ public:
 private:
     int ConnectHost();
     int Login();
-    int ReceiveUserAttr(int sum);
 
-    void PrintMsgToScreen(const SimpleMsgHdr *pMsg);
-    std::string FormatClientText(const ServerText &text);
+    void PrintMsgToScreen(const SimpleMsgHdr *pMsg) const;
+    std::string FormatClientText(const ServerText &text) const;
 
     const SimpleMsgHdr *Receive();
     int Send(SimpleMsgHdr *pMsg)
