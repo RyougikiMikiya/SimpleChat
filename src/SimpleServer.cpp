@@ -474,7 +474,7 @@ void SimpleServer::SInputReceiver::OnReceive()
     if(std::cin.eof())
     {
         //other quit operation
-        m_pClient->m_Listener.UnRegisterRecevier(STDIN_FILENO, this);
+        m_pServer->m_Listener.UnRegisterRecevier(STDIN_FILENO, this);
         return;
     }
     assert(m_pServer->m_SelfAttr.UID == 0);
