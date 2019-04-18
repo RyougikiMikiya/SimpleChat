@@ -5,17 +5,7 @@
 #include <fstream>
 #include <cassert>
 
-class logImpl
-{
-public:
-    virtual void WriteToLog(const char *log, int size) = 0;
-    virtual bool InitLogger(const char *fileName) = 0;
-    virtual bool CloseLogger() = 0;
-
-public:
-    logImpl(){}
-    virtual ~logImpl(){}
-};
+#include "SimpleLog.h"
 
 class logImpl_CPPFstream : public logImpl
 {

@@ -7,12 +7,11 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 
-
+#include "Log/SimpleLog.h"
 #include "SimpleListener.h"
 
 SimpleListener::SimpleListener() : m_hEpollRoot(-1), m_bStart(false)
 {
-
 }
 
 SimpleListener::~SimpleListener()
@@ -27,28 +26,50 @@ int SimpleListener::InitListener()
     assert(m_hEpollRoot == -1);
     assert(!m_bStart);
     int ret = 0;
+
+    //init epoll
     m_hEpollRoot = epoll_create(1);
     if (m_hEpollRoot < 0)
     {
-        std::cerr << "Epoll create ERR num: " << errno << " " << strerror(errno) << std::endl;
-        ret = -1;
+        DLOGERROR(strerror(errno));
+        return -1;
     }
+
+    //init unamed sem
+    ret = sem_init(&m_sem, 0, 0);
+    if (ret < 0)
+    {
+        DLOGERROR(strerror(errno));
+        ret = close(m_hEpollRoot);
+        if (ret < 0)
+        {
+            DLOGERROR(strerror(errno));
+        }
+        m_hEpollRoot = -1;
+    }
+
     return ret;
 }
 
 int SimpleListener::UninitListener()
 {
     assert(this);
-    assert(m_hEpollRoot >=0);
+    assert(m_hEpollRoot >= 0);
     assert(!m_bStart);
     assert(m_Receviers.empty());
+
     int ret = close(m_hEpollRoot);
-    if(ret < 0)
+    if (ret < 0)
     {
-        std::cerr << "Close Epoll ERR : " << errno << ". " <<strerror(errno) << std::endl;
-        ret = -1;
+        DLOGERROR(strerror(errno));
     }
     m_hEpollRoot = -1;
+
+    ret = sem_close(&m_sem);
+    if (ret < 0)
+    {
+        DLOGERROR(strerror(errno));
+    }
 
     return ret;
 }
@@ -59,26 +80,14 @@ int SimpleListener::Start()
     int ret = 0;
     assert(m_bStart == false);
     assert(m_hEpollRoot >= 0);
-    if(m_Receviers.empty())
-    {
-        std::cout << "Listener has no Recevier, please regist first!" << std::endl;
-        ret = -1;
-        goto ERR;
-    }
     m_bStart = true;
     ret = pthread_create(&m_hThread, NULL, EpollThread, this);
-    if(ret < 0)
+    if ( ret < 0 )
     {
-        std::cerr << "Create epoll thread ERR: " << strerror(errno) << std::endl;
-        ret = -1;
-        goto ERR;
+        DLOGERROR(strerror(errno));
+        m_bStart = false;
     }
-    return 0;
-
-    ERR:
-
-    std::cout << "Start listener failed" << std::endl;
-    m_bStart = false;
+        
     return ret;
 }
 
@@ -86,16 +95,16 @@ int SimpleListener::Stop()
 {
     assert(this);
     int ret = 0;
-    if(!m_bStart)
+    if (!m_bStart)
     {
-        std::cout << "Listener has been stopped" << std::endl;
-        return -1;
+        DLOGWARN("Listener has been stopped!");
+        return 0;
     }
     assert(m_hEpollRoot >= 0);
     ret = pthread_join(m_hThread, NULL);
-    if(ret < 0)
+    if (ret < 0)
     {
-        std::cerr << "Epoll thread join ERR: " << strerror(errno) << std::endl;
+        DLOGERROR(strerror(errno));
         return -1;
     }
     return ret;
@@ -108,27 +117,21 @@ int SimpleListener::RegisterRecevier(int fd, IReceiver *pReceiver)
     assert(m_hEpollRoot >= 0);
     assert(pReceiver);
     int ret = 0;
-    uint32_t events = EPOLLIN | EPOLLHUP;
-    epoll_event ev;
+    uint32_t events = EPOLLIN | EPOLLRDHUP;
+    struct epoll_event ev;
 
-    std::pair<ListIt, bool> pair = m_Receviers.insert({fd, pReceiver});
-    if(!pair.second)
-        goto ERR;
     bzero(&ev, sizeof(ev));
     ev.events = events;
     ev.data.ptr = pReceiver;
     ret = epoll_ctl(m_hEpollRoot, EPOLL_CTL_ADD, fd, &ev);
-    if(ret < 0)
-        goto ERR;
-    return ret;
-
-    ERR:
-    if(pair.second)
+    if (ret < 0)
     {
-        m_Receviers.erase(pair.first);
-        std::cerr << "Failed to regist listener : " << strerror(errno) << std::endl;
+        DLOGERROR(strerror(errno));
+        return ret;
     }
-    std::cerr << "This fd has existed!" << std::endl;
+    auto pair = m_Receviers.insert({fd, pReceiver});
+    assert(pair.second);
+
     return ret;
 }
 
@@ -143,46 +146,50 @@ int SimpleListener::UnRegisterRecevier(int fd, IReceiver *pReceiver)
     assert(it != m_Receviers.end());
     assert(it->second == pReceiver);
     m_Receviers.erase(it);
-    ret = epoll_ctl(m_hEpollRoot, EPOLL_CTL_DEL, fd , NULL);
-    if(ret < 0)
-        std::cerr << "Epoll Unregist "<< fd <<" Err" << strerror(errno) << std::endl;
+    ret = epoll_ctl(m_hEpollRoot, EPOLL_CTL_DEL, fd, NULL);
+    if (ret < 0)
+        DLOGERROR(strerror(errno));
     return ret;
 }
 
 void *SimpleListener::EpollThread(void *param)
 {
     assert(param);
-    std::cout << "Epoll thread start~" << std::endl;
+    DLOGINFO("Epoll thread start~");
     int nReady;
-    SimpleListener *pListener = static_cast<SimpleListener*>(param);
+    SimpleListener *pListener = static_cast<SimpleListener *>(param);
 
     epoll_event events[1024];
     IReceiver *pReceiver;
 
     while (pListener->m_bStart)
     {
-        nReady = epoll_wait(pListener->m_hEpollRoot, events, 1024, -1);
-        if (nReady < 0)
+        nReady = epoll_wait(pListener->m_hEpollRoot, events, 1024, 500);
+        if( nReady == 0)
+            continue;
+        if ( nReady < 0 )
         {
-            std::cerr << "epoll wait ERR:" << strerror(errno) << std::endl;
+            if( errno == EINTR );
+                continue;
+            DLOGERROR(strerror(errno));
             return NULL;
         }
         for (int i = 0; i < nReady; ++i)
         {
-            pReceiver = reinterpret_cast<IReceiver*>(events[i].data.ptr);
+            pReceiver = reinterpret_cast<IReceiver *>(events[i].data.ptr);
             assert(pReceiver);
-            if(events[i].events == EPOLLIN)
+            if (events[i].events & EPOLLIN)
             {
                 //...
             }
-            else if(events[i].events == EPOLLHUP)
+            else if (events[i].events & EPOLLRDHUP)
             {
                 //...
             }
             pReceiver->OnReceive();
         }
     }
-    std::cout << "Leave epoll thread ~" << std::endl;
+    DLOGINFO("Leave thread start~");
 
     return NULL;
 }

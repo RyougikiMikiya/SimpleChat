@@ -6,7 +6,17 @@
 #include <cstdlib>
 #include <sstream>
 
-#include "SimpleLogImpl.h"
+class logImpl
+{
+public:
+    virtual void WriteToLog(const char *log, int size) = 0;
+    virtual bool InitLogger(const char *fileName) = 0;
+    virtual bool CloseLogger() = 0;
+
+public:
+    logImpl(){}
+    virtual ~logImpl(){}
+};
 
 class SimpleLog
 {
