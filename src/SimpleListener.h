@@ -4,12 +4,20 @@
 #include <map>
 
 #include <pthread.h>
+#include <semaphore.h>
 
 class IReceiver
 {
 public:
     virtual void OnReceive() = 0;
 };
+
+
+/*
+后期：
+1.需要实现一个消费者队列来处理收到的epoll请求
+2.epoll设计高速模式
+*/
 
 
 class SimpleListener
@@ -38,9 +46,10 @@ private:
 
     int m_hEpollRoot;
     volatile bool m_bStart;
-    pthread_t m_hThread;
     RecevierList m_Receviers;
 
+    pthread_t m_hThread;
+    sem_t m_sem;
 
 };
 
