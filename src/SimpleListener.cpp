@@ -100,6 +100,7 @@ int SimpleListener::Stop()
         DLOGWARN("Listener has been stopped!");
         return 0;
     }
+    m_bStart = false;
     assert(m_hEpollRoot >= 0);
     ret = pthread_join(m_hThread, NULL);
     if (ret < 0)

@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdlib>
 #include <sstream>
+#include <cstdarg>
 
 class logImpl
 {
@@ -53,7 +54,7 @@ class SimpleLog
         pLogImpl->CloseLogger();
         
     }
-    static void WriteLog(LOGLEVEL lvl, time_t time, const char *filename, int lineno, const char *log);
+    static void WriteLog(LOGLEVEL lvl, time_t time, const char *filename, int lineno, const char *log, ...);
     private:
     static logImpl *pLogImpl;
     static LOGLEVEL slevel;
@@ -66,7 +67,7 @@ logImpl *SimpleLog::pLogImpl = nullptr;
 SimpleLog::LOGLEVEL SimpleLog::slevel = SimpleLog::LOGINFO;
 std::string SimpleLog::sLogLocation = "/home/wayne/log/";
 
-void SimpleLog::WriteLog(LOGLEVEL lvl, time_t time, const char *filename, int lineno, const char *log)
+void SimpleLog::WriteLog(LOGLEVEL lvl, time_t time, const char *filename, int lineno, const char *log, ...)
 {
     static const char *logLevel[] ={
     "LOGDEBUG",
@@ -80,15 +81,21 @@ void SimpleLog::WriteLog(LOGLEVEL lvl, time_t time, const char *filename, int li
     {
         return;
     }
+
+    char buf[BUFSIZ];
+    va_list ap;
+    va_start(ap, log);
+    vsprintf(buf, log, ap);
+
     std::stringstream stream;
-    stream << logLevel[lvl] << " " << time << " " << filename << " " << lineno << " " <<log << std::endl;
+    stream << logLevel[lvl] << " " << time << " " << filename << " " << lineno << " " << buf << std::endl;
     pLogImpl->WriteToLog(stream.str().c_str(), stream.str().size());
 }
 
-#define DLOGDEBUG(log) SimpleLog::WriteLog(SimpleLog::LOGDEBUG, time(NULL), __FILE__, __LINE__, log)
-#define DLOGINFO(log) SimpleLog::WriteLog(SimpleLog::LOGINFO, time(NULL), __FILE__, __LINE__, log)
-#define DLOGWARN(log) SimpleLog::WriteLog(SimpleLog::LOGWARN, time(NULL), __FILE__, __LINE__, log)
-#define DLOGERROR(log) SimpleLog::WriteLog(SimpleLog::LOGERR, time(NULL), __FILE__, __LINE__, log)
+#define DLOGDEBUG(log, ...) SimpleLog::WriteLog(SimpleLog::LOGDEBUG, time(NULL), __FILE__, __LINE__, log, ##__VA_ARGS__)
+#define DLOGINFO(log, ...) SimpleLog::WriteLog(SimpleLog::LOGINFO, time(NULL), __FILE__, __LINE__, log, ##__VA_ARGS__)
+#define DLOGWARN(log, ...) SimpleLog::WriteLog(SimpleLog::LOGWARN, time(NULL), __FILE__, __LINE__, log, ##__VA_ARGS__)
+#define DLOGERROR(log, ...) SimpleLog::WriteLog(SimpleLog::LOGERR, time(NULL), __FILE__, __LINE__, log, ##__VA_ARGS__)
 
 
 
