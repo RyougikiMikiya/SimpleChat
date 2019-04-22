@@ -11,23 +11,19 @@
 #include <sys/socket.h>
 
 #include "SimpleServer.h"
+#include "Log/SimpleLogImpl.h"
 
 static uint64_t sUID = 0;
 
-SimpleServer::SimpleServer() : m_hListenFD(-1), m_Port(-1), m_bStart(false), m_STDIN(this)
+SimpleServer::SimpleServer() : m_hListenFD(-1), m_Port(-1), m_bStart(false)
 {
 
 }
 
-int SimpleServer::Init(const char *pName, int port)
+int SimpleServer::Init(int port)
 {
     assert(this);
-    assert(pName);
     assert(m_hListenFD < 0);
-    m_SelfAttr.UserName = pName;
-    assert(!m_SelfAttr.UserName.empty());
-    m_SelfAttr.UID = sUID;
-    sUID++;
 
     m_Port = port;
     int ret;
@@ -49,33 +45,31 @@ int SimpleServer::Init(const char *pName, int port)
 
     ret = bind(m_hListenFD, (sockaddr*)&servAddr, sizeof(servAddr));
     if(ret < 0)
+    {
+        DLOGERROR("bind port %d ERR: %s", m_Port, strerror(errno));
         goto ERR;
+    }
 
     ret = listen(m_hListenFD, 20);
     if(ret < 0)
+    {
+        DLOGERROR("listen ERR: %s", strerror(errno));
         goto ERR;
+    } 
 
     ret = m_Listener.InitListener();
     if(ret < 0)
     {
-        ret = -2;
-        goto ERR;
-    }
-    ret = m_Listener.RegisterRecevier(STDIN_FILENO, &m_STDIN);
-    if(ret < 0)
-    {
-        ret = -3;
+        DLOGERROR("m_Listener.InitListener");
         goto ERR;
     }
     ret = m_Listener.RegisterRecevier(m_hListenFD, this);
     if(ret < 0)
     {
+        DLOGERROR("m_Listener.RegisterRecevier");
         ret = -4;
         goto ERR;
     }
-
-    m_SelfAttr.bOnline = true;
-    m_Users.insert({m_SelfAttr.UID, m_SelfAttr});
 
     return 0;
 
@@ -87,11 +81,6 @@ int SimpleServer::Init(const char *pName, int port)
     }
     if(ret < -2)
         m_Listener.UninitListener();
-
-    if(ret == -4)
-        m_Listener.UnRegisterRecevier(STDIN_FILENO, &m_STDIN);
-    sUID = 0;
-    std::cerr << "Server Init ERR: " << strerror(errno) << std::endl;
     return ret;
 }
 
@@ -101,7 +90,7 @@ int SimpleServer::Uninit()
     int ret;
     if(m_hListenFD < 0)
     {
-        std::cout << "Server not init!" << std::endl;
+        DLOGWARN("Server not init!");
         return 0;
     }
 
@@ -114,17 +103,25 @@ int SimpleServer::Uninit()
         m_Sessions.pop_back();
     }
 
-    ret = m_Listener.UnRegisterRecevier(STDIN_FILENO, &m_STDIN);
-    assert( ret >= 0);
     ret = m_Listener.UnRegisterRecevier(m_hListenFD, this);
-    assert( ret >= 0);
+    if(ret < 0)
+    {
+        //error handle
+        DLOGERROR("Failed to UnRegisterRecevier");
+
+    }
+
     ret = m_Listener.UninitListener();
     if(ret < 0)
-        std::cout << "Listener Uninit fail" << std::endl;
+    {
+        //error handle
+        DLOGERROR("Failed to UninitListener");
+    }
+
     ret = close(m_hListenFD);
     if(ret < 0)
     {
-        std::cerr << "Server Uninit ERR: " << strerror(errno) << std::endl;
+        DLOGERROR("Failed to close m_hListenFD %s", strerror(errno));
     }
     m_hListenFD = -1;
     return ret;
@@ -136,7 +133,7 @@ int SimpleServer::Start()
     assert(m_hListenFD >= 0);
     if(m_bStart)
     {
-        std::cout << "Server has been started" << std::endl;
+        DLOGWARN("Server has been started");
         return 0;
     }
 
@@ -147,7 +144,7 @@ int SimpleServer::Start()
 
     return ret;
     ERR:
-    std::cerr << "Failed to start server!" << std::endl;
+    DLOGERROR("Failed to start server!");
     return -1;
 }
 
@@ -190,7 +187,7 @@ void SimpleServer::OnReceive()
     }
     else
     {
-        perror("Failed to accept!");
+        DLOGERROR("Failed to accept! %s ", strerror(errno));
     }
 }
 
@@ -203,58 +200,19 @@ void SimpleServer::PushToAll(const SimpleMsgHdr *pMsg)
     }
 }
 
-std::string SimpleServer::FormatServerText(const ServerText &text)
-{
-    UserIt it = m_Users.find(text.UID);
-    assert(it != m_Users.end());
-    std::stringstream stream;
-    stream << it->second.UserName << ':';
-    stream << text.content;
-    stream << std::endl;
-    struct tm *pTime = localtime(&text.Time);
-    stream << "    <" <<pTime->tm_hour << ">:";
-    stream << '<' <<pTime->tm_min << ">.";
-    stream << '<' <<pTime->tm_sec << ">";
-    return stream.str();
-}
-
-void SimpleServer::PrintMsgToScreen(const SimpleMsgHdr *pMsg)
-{
-    assert(pMsg);
-    assert(pMsg->FrameHead == MSG_FRAME_HEADER);
-    assert(pMsg->Length < BUF_MAX_LEN);
-
-    switch(pMsg->ID)
-    {
-    case SPLMSG_CHAT :
-    {
-        ServerText text;
-        ServerChatMsg::Unpack(pMsg, text);
-        std::cout << FormatServerText(text) << std::endl;
-    }
-        break;
-    default:
-        std::cout << "Unkown Message type" << std::endl;
-        break;
-    }
-}
-
 uint64_t SimpleServer::LoginAuthentication(const AuthInfo &info)
 {
-    assert(sUID != 0);
-
     //a lot of operation
-    if(info.UserName == m_SelfAttr.UserName)
-        return 0;
-
     uint64_t uid = CheckNameExisted(info.UserName);
     if(uid != 0)
     {
-        std::cout << "old in" << std::endl;
         UserIt it = m_Users.find(uid);
         assert(it != m_Users.end());
+        assert(it->first == it->second.UID );
+        DLOGINFO("old in %s uid:% ld online:%d", info.UserName.c_str(), it->second.UID, it->second.bOnline);
         if(it->second.bOnline)
         {
+            //this user has already online
             return 0;
         }
         else
@@ -265,20 +223,18 @@ uint64_t SimpleServer::LoginAuthentication(const AuthInfo &info)
     }
     else
     {
-        std::cout << "new in" << std::endl;
         UserAttr attr;
-        attr.UID = sUID;
-        sUID++;
+        attr.UID = ++sUID;
         attr.bOnline = true;
         attr.UserName = info.UserName;
         m_Users.insert({attr.UID, attr});
+        DLOGINFO("old in %s uid:% ld online:%d", attr.UserName.c_str(), attr.UID, attr.bOnline);
+
         return attr.UID;
     }
 
     return 0;
 }
-
-
 
 uint64_t SimpleServer::CheckNameExisted(const std::string &name) const
 {
@@ -293,7 +249,7 @@ uint64_t SimpleServer::CheckNameExisted(const std::string &name) const
 SimpleServer::CSession *SimpleServer::OnSessionCreate(int fd)
 {
     CSession *pSession = new CSession(this, fd);
-    int ret;
+    int ret = 0;
     if(!pSession)
         goto ERR;
     ret = pSession->Create();
@@ -303,7 +259,7 @@ SimpleServer::CSession *SimpleServer::OnSessionCreate(int fd)
     return pSession;
 
     ERR:
-    std::cerr << "Create session failed!" << std::endl;
+    DLOGERROR("Create session failed! ret %d", ret);
     if(pSession)
         delete pSession;
     return NULL;
@@ -312,17 +268,15 @@ SimpleServer::CSession *SimpleServer::OnSessionCreate(int fd)
 void SimpleServer::OnSessionFinished(SimpleServer::CSession *pSession)
 {
     assert(pSession);
+    //erase session
     ListIt it = std::find(m_Sessions.begin(), m_Sessions.end(), pSession);
     assert(it != m_Sessions.end());
     m_Sessions.erase(it);
-    //return value???
-    uint64_t uid = pSession->GetUID();
-    if(uid != 0)
-    {
-        UserIt it = m_Users.find(uid);
-        assert(it != m_Users.end());
-        it->second.bOnline = false;
-    }
+
+    //change status
+    UserIt uit = m_Users.find( pSession->GetUID() );
+    assert(uit != m_Users.end());
+    uit->second.bOnline = false;
     pSession->Destory();
     delete pSession;
 }
@@ -374,20 +328,17 @@ int SimpleServer::CSession::Destory()
     assert(this);
     assert(m_pServer);
 
-    if(m_UID != 0)
-        m_UID = 0;
     int ret = m_pServer->m_Listener.UnRegisterRecevier(m_hFD, this);
     if(ret < 0)
-        goto ERR;
-    if(m_hFD < 0)
-        return 0;
+    {
+        //error handle
+        DLOGERROR("m_pServer->m_Listener.UnRegisterRecevier");
+    }
     ret = close(m_hFD);
     if(ret < 0)
-        goto ERR;
-    return ret;
-
-    ERR:
-    std::cerr << "Failed to destory sesssion " << std::endl;
+    {
+        DLOGERROR("close m_hFD %s", strerror(errno));
+    }
     return ret;
 }
 
@@ -454,7 +405,6 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
         ServerText sText{time(NULL), cText.UID, cText.content};
         SimpleMsgHdr *pChat = ServerChatMsg::Pack(m_SendBuf, sText);
         m_pServer->m_Records.push_back(sText);
-        m_pServer->PrintMsgToScreen(pChat);
         m_pServer->PushToAll(pChat);
     }
         break;
@@ -464,23 +414,4 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
 
     }
     return ret;
-}
-
-void SimpleServer::SInputReceiver::OnReceive()
-{
-    assert(this);
-    assert(m_pServer);
-    std::getline(std::cin, m_LineBuf);
-    if(std::cin.eof())
-    {
-        //other quit operation
-        m_pServer->m_Listener.UnRegisterRecevier(STDIN_FILENO, this);
-        return;
-    }
-    assert(m_pServer->m_SelfAttr.UID == 0);
-    ServerText text{time(NULL), m_pServer->m_SelfAttr.UID, m_LineBuf};
-    SimpleMsgHdr *pMsg = ServerChatMsg::Pack(m_SendBuf, text);
-    m_pServer->m_Records.push_back(text);
-    m_pServer->PrintMsgToScreen(pMsg);
-    m_pServer->PushToAll(pMsg);
 }

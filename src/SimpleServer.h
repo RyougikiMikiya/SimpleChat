@@ -45,7 +45,7 @@ public:
         char m_RecvBuf[BUF_MAX_LEN];
     };
 
-    int Init(const char *pName, int port);
+    int Init(int port);
     int Uninit();
 
     int Start();
@@ -58,25 +58,11 @@ private:
     void PushToAll(const SimpleMsgHdr *pMsg);
 
     //UI
-    std::string FormatServerText(const ServerText &text);
-    void PrintMsgToScreen(const SimpleMsgHdr *pMsg);
 
     //function for login
     uint64_t LoginAuthentication(const AuthInfo &info);
     uint64_t CheckNameExisted(const std::string &name) const;
     void RegistUser(UserAttr &info);
-
-private:
-    class SInputReceiver : public IReceiver
-    {
-    public:
-        SInputReceiver(SimpleServer *pServer) : m_pServer(pServer){}
-        void OnReceive();
-    private:
-        SimpleServer *m_pServer;
-        char m_SendBuf[BUF_MAX_LEN];
-        std::string m_LineBuf;
-    };
 
 private:
     typedef std::vector<CSession*> SessionList;
@@ -88,12 +74,10 @@ private:
     CSession *OnSessionCreate(int fd);
     void OnSessionFinished(CSession *pSession);
 
-    UserAttr m_SelfAttr;
     int m_hListenFD;
     int m_Port;
     volatile bool m_bStart;
     SimpleListener m_Listener;
-    SInputReceiver m_STDIN;
 
     SessionList m_Sessions;
     RecordList m_Records;
