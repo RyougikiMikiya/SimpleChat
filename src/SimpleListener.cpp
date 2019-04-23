@@ -65,7 +65,7 @@ int SimpleListener::UninitListener()
     }
     m_hEpollRoot = -1;
 
-    ret = sem_close(&m_sem);
+    ret = sem_destroy(&m_sem);
     if (ret < 0)
     {
         DLOGERROR(strerror(errno));
