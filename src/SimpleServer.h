@@ -4,6 +4,9 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <deque>
+#include <pthread.h>
+#include <semaphore.h>
 
 #include "SimpleMessage.h"
 #include "SimpleListener.h"
@@ -18,6 +21,12 @@ public:
     class CSession : public IReceiver
     {
     public:
+        struct SessionReport
+        {
+           void (SimpleServer::*pReport)(CSession *pSession);
+           CSession *pReporter;
+        };
+
         CSession(SimpleServer *pHost, int fd);
         ~CSession();
         //overrides
@@ -51,18 +60,21 @@ public:
     int Start();
     int Stop();
 
+    int RunServerLoop();
+
 public:
     void OnReceive();
 
 private:
     void PushToAll(const SimpleMsgHdr *pMsg);
-
     //UI
 
     //function for login
     uint64_t LoginAuthentication(const AuthInfo &info);
     uint64_t CheckNameExisted(const std::string &name) const;
-    void RegistUser(UserAttr &info);
+
+    //function for report
+    void ReportMsgIn(CSession::SessionReport & report);
 
 private:
     typedef std::vector<CSession*> SessionList;
@@ -71,17 +83,25 @@ private:
     typedef std::vector<ServerText> RecordList;
     typedef RecordList::iterator RecordIt;
 
+    typedef std::deque<CSession::SessionReport> ReportList;
     CSession *OnSessionCreate(int fd);
+
+    //session report
     void OnSessionFinished(CSession *pSession);
 
     int m_hListenFD;
     int m_Port;
     volatile bool m_bStart;
     SimpleListener m_Listener;
+    sem_t m_ReportSem;
 
-    SessionList m_Sessions;
-    RecordList m_Records;
-    UserList m_Users;
+    SessionList         m_Sessions;
+    RecordList          m_Records;
+    ReportList          m_Reports;
+    UserList            m_Users;
+    
+    pthread_cond_t m_ReportCond;
+    pthread_mutex_t m_ReportMutex;
 
 
     //function for log

@@ -71,6 +71,22 @@ int SimpleServer::Init(int port)
         goto ERR;
     }
 
+    ret = pthread_mutex_init(&m_ReportMutex, NULL);
+    if(ret < 0)
+    {
+        DLOGERROR("pthread_mutex_init %s", strerror(errno));
+        ret = -4;
+        goto ERR;
+    }
+
+    ret = pthread_cond_init(&m_ReportCond, NULL);
+    if(ret < 0)
+    {
+        DLOGERROR("pthread_cond_init %s", strerror(errno));
+        ret = -4;
+        goto ERR;
+    }
+
     return 0;
 
     ERR:
@@ -123,6 +139,20 @@ int SimpleServer::Uninit()
     {
         DLOGERROR("Failed to close m_hListenFD %s", strerror(errno));
     }
+
+    ret = pthread_mutex_destroy(&m_ReportMutex);
+    if(ret < 0)
+    {
+        DLOGERROR("pthread_mutex_init %s", strerror(errno));
+    }
+
+    ret = pthread_cond_destroy(&m_ReportCond);
+    if(ret < 0)
+    {
+        DLOGERROR("pthread_cond_init %s", strerror(errno));
+    }
+
+
     m_hListenFD = -1;
     return ret;
 }
@@ -191,6 +221,37 @@ void SimpleServer::OnReceive()
     }
 }
 
+int SimpleServer::RunServerLoop()
+{
+    while( m_bStart )
+    {
+        int ret = pthread_mutex_lock(&m_ReportMutex);
+        if (ret < 0)
+        {
+            DLOGERROR("Failed Lock m_ReportMutex %s", strerror(errno));
+        }
+        while (m_Reports.empty())
+        {
+            ret = pthread_cond_wait(&m_ReportCond, &m_ReportMutex);
+            if (ret < 0)
+            {
+                DLOGERROR("Failed wait m_ReportCond %s", strerror(errno));
+            }
+        }
+        auto report = m_Reports.front();
+        m_Reports.pop_front();
+        ret = pthread_mutex_unlock(&m_ReportMutex);
+        if (ret < 0)
+        {
+            DLOGERROR("Failed Lock m_ReportMutex %s", strerror(errno));
+        }
+
+        assert(report.pReporter);
+        assert(report.pReport);
+        (this->*report.pReport)(report.pReporter);
+    }
+}
+
 void SimpleServer::PushToAll(const SimpleMsgHdr *pMsg)
 {
     assert(pMsg);
@@ -244,6 +305,17 @@ uint64_t SimpleServer::CheckNameExisted(const std::string &name) const
     });
 
     return it != m_Users.cend() ? it->second.UID : 0;
+}
+
+void SimpleServer::ReportMsgIn(CSession::SessionReport & report)
+{
+    pthread_mutex_lock(&m_ReportMutex);
+    
+    m_Reports.push_back(report);
+
+    pthread_mutex_unlock(&m_ReportMutex);
+
+    pthread_cond_signal(&m_ReportCond);
 }
 
 SimpleServer::CSession *SimpleServer::OnSessionCreate(int fd)
@@ -309,7 +381,10 @@ void SimpleServer::CSession::OnReceive()
     const SimpleMsgHdr *pMsg = Recevie();
     if(!pMsg)
     {
-        m_pServer->OnSessionFinished(this);
+        SessionReport report;
+        report.pReport = &SimpleServer::OnSessionFinished;
+        report.pReporter = this;
+        m_pServer->ReportMsgIn(report);
         return;
     }
     HandleMessage(pMsg);
