@@ -3,7 +3,7 @@
 #include <cassert>
 
 #include "SimpleServer.h"
-#include "Log/SimpleLog.h"
+#include "Log/SimpleLogImpl.h"
 
 int main(int argc, char**argv)
 {
