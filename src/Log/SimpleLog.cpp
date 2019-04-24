@@ -1,4 +1,4 @@
-#include "SimpleLogImpl.h"
+#include "SimpleLog.h"
 
 logImpl *SimpleLog::pLogImpl = nullptr;
 SimpleLog::LOGLEVEL SimpleLog::slevel = SimpleLog::LOGINFO;
