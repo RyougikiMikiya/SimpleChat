@@ -2,7 +2,7 @@
 
 logImpl *SimpleLog::pLogImpl = nullptr;
 SimpleLog::LOGLEVEL SimpleLog::slevel = SimpleLog::LOGINFO;
-std::string SimpleLog::sLogLocation = "/home/wayne/log/";
+std::string SimpleLog::sLogLocation = "/home/log/";
 
 void SimpleLog::WriteLog(LOGLEVEL lvl, time_t time, const char *filename, int lineno, const char *log, ...)
 {
