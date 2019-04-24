@@ -36,6 +36,7 @@ class SimpleLog
         pLogImpl = pImpl;
     }
     static void SetLogLevel(LOGLEVEL lvl = LOGINFO){ slevel = lvl;}
+    static void SetLogDir(const char * path){ sLogLocation = path;}
     static int LogStart()
     {
         assert(pLogImpl);
