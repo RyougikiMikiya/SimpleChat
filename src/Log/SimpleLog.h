@@ -1,6 +1,7 @@
 #ifndef SIMPLELOG_H
 #define SIMPLELOG_H
 
+#include <iostream>
 #include <ctime>
 #include <cassert>
 #include <cstdlib>
@@ -17,6 +18,25 @@ public:
 public:
     logImpl(){}
     virtual ~logImpl(){}
+};
+
+class logImplSTDOUT : public logImpl
+{
+public:
+    void WriteToLog(const char *log, int size) override
+    {
+        std::cout << log;
+    }
+
+    bool CloseLogger()
+    {
+        return true;
+    }
+
+    bool InitLogger(const char *fileName)
+    {
+        return true;
+    }
 };
 
 class SimpleLog
@@ -42,7 +62,7 @@ class SimpleLog
         assert(pLogImpl);
         time_t now = time(NULL);
         std::stringstream s;
-        s << sLogLocation << now;
+        s << sLogLocation << '/' <<now;
         if( !pLogImpl->InitLogger(s.str().c_str()) )
         {
             return -1;

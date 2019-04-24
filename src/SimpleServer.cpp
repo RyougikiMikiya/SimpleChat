@@ -384,7 +384,14 @@ void SimpleServer::CSession::OnReceive()
         SessionReport report;
         report.pReport = &SimpleServer::OnSessionFinished;
         report.pReporter = this;
+        int ret = m_pServer->m_Listener.UnRegisterRecevier(m_hFD, this);
+        if (ret < 0)
+        {
+            //error handle
+            DLOGERROR("m_pServer->m_Listener.UnRegisterRecevier");
+        }
         m_pServer->ReportMsgIn(report);
+        
         return;
     }
     HandleMessage(pMsg);
@@ -403,17 +410,12 @@ int SimpleServer::CSession::Destory()
     assert(this);
     assert(m_pServer);
 
-    int ret = m_pServer->m_Listener.UnRegisterRecevier(m_hFD, this);
-    if(ret < 0)
-    {
-        //error handle
-        DLOGERROR("m_pServer->m_Listener.UnRegisterRecevier");
-    }
     ret = close(m_hFD);
     if(ret < 0)
     {
         DLOGERROR("close m_hFD %s", strerror(errno));
     }
+    m_UID = 0;
     return ret;
 }
 
@@ -423,6 +425,7 @@ const SimpleMsgHdr *SimpleServer::CSession::Recevie()
     int ret = RecevieMessage(m_hFD, &pMsg);
     if(ret < 0)
     {
+        DLOGWARN("recv NULL msg");
         return NULL;
     }
     assert(pMsg->FrameHead == MSG_FRAME_HEADER);

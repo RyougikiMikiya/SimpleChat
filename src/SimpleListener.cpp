@@ -118,13 +118,14 @@ int SimpleListener::RegisterRecevier(int fd, IReceiver *pReceiver)
     assert(m_hEpollRoot >= 0);
     assert(pReceiver);
     int ret = 0;
-    uint32_t events = EPOLLIN | EPOLLRDHUP;
+    uint32_t events = EPOLLIN;
     struct epoll_event ev;
 
     bzero(&ev, sizeof(ev));
     ev.events = events;
     ev.data.ptr = pReceiver;
     ret = epoll_ctl(m_hEpollRoot, EPOLL_CTL_ADD, fd, &ev);
+    DLOGDEBUG("Add fd %d to epoll", fd);
     if (ret < 0)
     {
         DLOGERROR(strerror(errno));
@@ -148,6 +149,7 @@ int SimpleListener::UnRegisterRecevier(int fd, IReceiver *pReceiver)
     assert(it->second == pReceiver);
     m_Receviers.erase(it);
     ret = epoll_ctl(m_hEpollRoot, EPOLL_CTL_DEL, fd, NULL);
+    DLOGDEBUG("Del fd %d from epoll", fd);
     if (ret < 0)
         DLOGERROR(strerror(errno));
     return ret;
@@ -165,6 +167,7 @@ void *SimpleListener::EpollThread(void *param)
 
     while (pListener->m_bStart)
     {
+        //LT模式下，如果socket出错（对端关闭），如果没有从epoll上移除，也没关闭的话。会不停的触发可读事件。
         nReady = epoll_wait(pListener->m_hEpollRoot, events, 1024, 500);
         if( nReady == 0)
             continue;
@@ -175,19 +178,22 @@ void *SimpleListener::EpollThread(void *param)
             DLOGERROR(strerror(errno));
             return NULL;
         }
+        DLOGDEBUG("Epoll return %d", nReady);
         for (int i = 0; i < nReady; ++i)
         {
             pReceiver = reinterpret_cast<IReceiver *>(events[i].data.ptr);
             assert(pReceiver);
             if (events[i].events & EPOLLIN)
             {
-                //...
+                DLOGDEBUG("Epoll recv EPOLLIN", nReady);
             }
             else if (events[i].events & EPOLLRDHUP)
             {
-                //...
+                DLOGDEBUG("Epoll recv EPOLLRDHUP", nReady);
             }
+            DLOGDEBUG("%p call OnReceive", pReceiver);
             pReceiver->OnReceive();
+            DLOGDEBUG("%p call finish OnReceive", pReceiver);
         }
     }
     DLOGINFO("Leave thread start~");
