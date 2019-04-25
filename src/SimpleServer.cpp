@@ -410,7 +410,7 @@ int SimpleServer::CSession::Destory()
     assert(this);
     assert(m_pServer);
 
-    ret = close(m_hFD);
+    int ret = close(m_hFD);
     if(ret < 0)
     {
         DLOGERROR("close m_hFD %s", strerror(errno));

@@ -56,13 +56,21 @@ class SimpleLog
         pLogImpl = pImpl;
     }
     static void SetLogLevel(LOGLEVEL lvl = LOGINFO){ slevel = lvl;}
-    static void SetLogDir(const char * path){ sLogLocation = path;}
+    static void SetLogDir(const char *path){ sLogLocation = path;}
     static int LogStart()
     {
         assert(pLogImpl);
         time_t now = time(NULL);
         std::stringstream s;
-        s << sLogLocation << '/' <<now;
+        if(!sLogLocation.empty())
+        {
+            s << sLogLocation << '/' <<now;
+        }
+        else
+        {
+            s << now;
+        }
+        
         if( !pLogImpl->InitLogger(s.str().c_str()) )
         {
             return -1;
