@@ -346,9 +346,12 @@ void SimpleServer::OnSessionFinished(SimpleServer::CSession *pSession)
     m_Sessions.erase(it);
 
     //change status
-    UserIt uit = m_Users.find( pSession->GetUID() );
-    assert(uit != m_Users.end());
-    uit->second.bOnline = false;
+    if (pSession->GetUID() != 0)
+    {
+        UserIt uit = m_Users.find(pSession->GetUID());
+        assert(uit != m_Users.end());
+        uit->second.bOnline = false;
+    }
     pSession->Destory();
     delete pSession;
 }

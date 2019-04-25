@@ -185,11 +185,11 @@ void *SimpleListener::EpollThread(void *param)
             assert(pReceiver);
             if (events[i].events & EPOLLIN)
             {
-                DLOGDEBUG("Epoll recv EPOLLIN", nReady);
+                DLOGDEBUG("Epoll recv EPOLLIN");
             }
             else if (events[i].events & EPOLLRDHUP)
             {
-                DLOGDEBUG("Epoll recv EPOLLRDHUP", nReady);
+                DLOGDEBUG("Epoll recv EPOLLRDHUP");
             }
             DLOGDEBUG("%p call OnReceive", pReceiver);
             pReceiver->OnReceive();
