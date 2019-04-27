@@ -153,9 +153,9 @@ private:
 struct ErrMessage : public SimpleMsgHdr
 {
 public:
-    ErrMessage (ErrMsgType ERR) : SimpleMsgHdr( SPLMSG_ERR , sizeof(*this))
+    ErrMessage (ErrMsgType ErrType) : SimpleMsgHdr( SPLMSG_ERR , sizeof(*this))
     {
-        Errtype = static_cast< uint16_t >( ERR );
+        Errtype = static_cast< uint16_t >( ErrType );
     }
     uint16_t Errtype;
 };
