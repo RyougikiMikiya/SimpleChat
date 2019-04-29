@@ -15,8 +15,9 @@
 #include <sys/signal.h>
 
 #include "SimpleClient.h"
+#include "Log/SimpleLogImpl.h"
 
-SimpleClient::SimpleClient() : m_hSocket(-1), m_Port(-1), m_HostIP(0), m_bWork(false), m_STDIN(this)
+SimpleClient::SimpleClient() : m_hSocket(-1), m_Port(-1), m_HostIP(0), m_bWork(false)
 {
 
 }
@@ -29,6 +30,7 @@ int SimpleClient::Init(const char *pName, const char *pIP, int port)
     assert(pIP);
     int ret;
     std::string name(pName);
+    m_strIP = pIP;
     m_Port = port;
     m_SelfAttr.UserName = name;
     int on = 1;
@@ -36,52 +38,60 @@ int SimpleClient::Init(const char *pName, const char *pIP, int port)
     ret = inet_pton(AF_INET, pIP, &m_HostIP);
     if(ret != 1)
     {
-        std::cout << "Invaild IP address!Please enter IPV4 addr!" << std::endl;
-        goto ERR;
+        DLOGERROR("Invaild IP address %s", pIP);
+        goto mERR;
     }
     m_hSocket = socket(AF_INET, SOCK_STREAM, 0);
     if(m_hSocket < 0)
-        goto ERR;
+        goto mERR;
 
     ret = setsockopt(m_hSocket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
     if(ret < 0)
-        goto ERR;
+        goto mERR;
 
     ret = m_Listener.InitListener();
     if(ret < 0)
     {
         ret = -2;
-        goto ERR;
+        goto mERR;
+    }
+    ret = pthread_mutex_init(&m_queMutex, NULL);
+
+    ret = pthread_cond_init(&m_Cond, NULL);
+
+    //启动ui
+    ret = m_pUI->Run();
+    if(ret < 0)
+    {
+        ret = -3;
+        goto mERR;
     }
 
     return 0;
 
-    ERR:
+    mERR:
     if(m_hSocket >=0)
     {
         close(m_hSocket);
         m_hSocket = -1;
     }
-    std::cerr << "Fail in client init" << std::endl;
+    DLOGERROR("Init client err %d", ret);
     return -1;
 
 }
 
-int SimpleClient::Start()
+int SimpleClient::Run()
 {
     assert(!m_bWork);
     int ret;
+    //启动网络部分
     ret = ConnectHost();
     if(ret < 0)
-        goto ERR;
-
-    ret = m_Listener.RegisterRecevier(STDIN_FILENO, &m_STDIN);
-    if(ret < 0)
-        goto ERR;
+        goto mERR;
 
     ret = m_Listener.RegisterRecevier(m_hSocket, this);
     if(ret < 0)
-        goto ERR;
+        goto mERR;
 
     ret = Login();
     if(ret == 0)
@@ -94,9 +104,36 @@ int SimpleClient::Start()
     }
 
     m_bWork = true;
-    //remove...
+    while (m_bWork)
+    {
+        //client主线程lock
+        pthread_mutex_lock(&m_queMutex);
+        while(m_EventQueue.empty())
+        {
+            pthread_cond_wait(&m_Cond, &m_queMutex);
+        }
+        UIevent event = m_EventQueue.front();
+        m_EventQueue.pop_front();
+        pthread_mutex_unlock(&m_queMutex);
+        switch (event.eventType)
+        {
+        case UI_USER_INPUT:
+        {
+            assert( event.arg.type() == typeid(std::string) );
+            assert( event.arg.has_value());
+            ClientText text{m_SelfAttr.UID, std::any_cast<std::string>(event.arg)};
+            SimpleMsgHdr *pMsg = UserInputMsg::Pack(m_SendBuf, text);
+            Send(pMsg);
+        }
+            break;
+        
+        default:
+            break;
+        }
+    }
+    
     return 0;
-    ERR:
+mERR:
     std::cout << "Start client failed" << std::endl;
     close(m_hSocket);
     m_hSocket = -1;
@@ -125,6 +162,13 @@ void SimpleClient::OnReceive()
         m_bWork = false;
 }
 
+void SimpleClient::putUIevent(UIevent & event)
+{
+    pthread_mutex_lock(&m_queMutex);
+    m_EventQueue.push_back(event);
+    pthread_mutex_unlock(&m_queMutex);
+}
+
 int SimpleClient::ConnectHost()
 {
     int ret;
@@ -139,7 +183,7 @@ int SimpleClient::ConnectHost()
     ret = connect(m_hSocket, (sockaddr *)&servaddr, sizeof(servaddr));
     if(ret < 0)
     {
-        std::cerr << "Connect to " << m_Port << " " << m_HostIP <<" falied! " << strerror(errno) << std::endl;
+        DLOGERROR("connect %s %d error %d: %s", m_strIP.c_str(), m_Port, errno, strerror(errno));
         return ret;
     }
 
@@ -168,7 +212,7 @@ int SimpleClient::Login()
     return 0;
 }
 
-void SimpleClient::PrintMsgToScreen(const SimpleMsgHdr *pMsg) const
+void SimpleClient::PrintMsgToScreen(const SimpleMsgHdr *pMsg)
 {
     assert(pMsg);
     assert(pMsg->FrameHead == MSG_FRAME_HEADER);
@@ -180,7 +224,12 @@ void SimpleClient::PrintMsgToScreen(const SimpleMsgHdr *pMsg) const
     {
         ServerText text;
         ServerChatMsg::Unpack(pMsg, text);
-        std::cout << FormatClientText(text) << std::endl;
+        m_pUI->PrintToScreen( FormatClientText(text).c_str());
+    }
+    case SPLMSG_ERR:
+    {
+        ErrMessage *pErrMsg = (ErrMessage *)pMsg;
+        m_pUI->PrintToScreen("Err! Err type :");
     }
         break;
     default:
@@ -194,13 +243,13 @@ std::string SimpleClient::FormatClientText(const ServerText &text) const
     UserConstIt it = m_Users.find(text.UID);
     assert(it != m_Users.cend());
     std::stringstream stream;
-    stream << it->second.UserName << ':';
-    stream << text.content;
-    stream << std::endl;
     struct tm *pTime = localtime(&text.Time);
-    stream << "    <" <<pTime->tm_hour << ">:";
-    stream << '<' <<pTime->tm_min << ">.";
-    stream << '<' <<pTime->tm_sec << ">";
+    stream << "<" <<pTime->tm_hour << ">:"
+            << '<' <<pTime->tm_min << ">."
+            << '<' <<pTime->tm_sec << ">"
+            << it->second.UserName << ": "
+            << text.content
+            << std::endl;
     return stream.str();
 }
 
@@ -248,7 +297,7 @@ int SimpleClient::HandleMsg(const SimpleMsgHdr *pMsg)
         break;
     case SPLMSG_ERR:
     {
-
+        PrintMsgToScreen(pMsg);
     }
         break;
     case SPLMSG_USERATTR:
@@ -260,21 +309,4 @@ int SimpleClient::HandleMsg(const SimpleMsgHdr *pMsg)
         std::cout << "Client recv Unknown Message type!" << std::endl;
     }
     return 0;
-}
-
-void SimpleClient::CInputReceiver::OnReceive()
-{
-    assert(this);
-    assert(m_pClient);
-    std::getline(std::cin, m_LineBuf);
-    if(std::cin.eof())
-    {
-        //other quit operation
-        m_pClient->m_Listener.UnRegisterRecevier(STDIN_FILENO, this);
-        return;
-    }
-    assert(m_pClient->m_SelfAttr.UID != 0);
-    ClientText cText{m_pClient->m_SelfAttr.UID, m_LineBuf};
-    SimpleMsgHdr *pInputMsg = UserInputMsg::Pack(m_SendBuf, cText);
-    m_pClient->Send(pInputMsg);
 }

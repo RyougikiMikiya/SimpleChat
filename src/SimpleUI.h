@@ -12,22 +12,20 @@ class SimpleUI
 public:
     SimpleUI(SimpleClient *client): 
         m_bRun(false), m_pOutWindow(NULL), m_pInWindow(NULL), m_pClient(client), 
-        m_curRow(0), m_putRow(0), m_maxRow(0)
+        m_inRow(0), m_putRow(0), m_putMaxRow(0), m_bInit(false)
     {
 
     }
     int Run();
+    int Stop();
     int PrintToScreen(const char *str);
     ~SimpleUI();
 
 private:
-
-    int Init();
-
-    static void ReceiveThread(SimpleUI *);
-
+    static void *ReceiveThread(void *);
     
-    bool m_bRun;
+    volatile bool m_bRun;
+    bool m_bInit;
     WINDOW *m_pOutWindow;
     WINDOW *m_pInWindow;
     int m_inRow;//输入光标行号
