@@ -11,7 +11,6 @@ using namespace std;
 int main(int argc, char **argv)
 {
     logImpl_LinuxLocal *pLogger = new logImpl_LinuxLocal;
-    SimpleLog::LogSet(pLogger);
     SimpleLog::LogStart();
     DLOGINFO("ready Start");
     if (argc != 2)

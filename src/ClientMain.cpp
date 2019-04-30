@@ -13,6 +13,7 @@ int main(int argc, char **argv)
     logImpl_LinuxLocal *pLogger = new logImpl_LinuxLocal;
     SimpleLog::LogSet(pLogger);  
     SimpleLog::LogStart();
+    SimpleLog::SetLogLevel(SimpleLog::LOGDEBUG);
     DLOGINFO("ready Start");
     if (argc != 4)
     {
@@ -23,9 +24,11 @@ int main(int argc, char **argv)
     cout << atoi(argv[3]) << endl;
     SimpleClient cli;
     int ret = cli.Init(argv[1], argv[2], atoi(argv[3]));
-    ret = cli.Start();
-    sleep(300);
-    ret = cli.Stop();
+    if(ret < 0)
+    {
+        return -1;
+    }
+    ret = cli.Run();
 
     return 0;
 }

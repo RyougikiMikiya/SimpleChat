@@ -12,6 +12,7 @@
 
 SimpleUI::~SimpleUI()
 {
+    assert(!m_bInit);
     assert(m_pOutWindow == nullptr);
     assert(m_pInWindow == nullptr);
 }
@@ -42,6 +43,7 @@ int SimpleUI::Run()
         goto ERR_NCURESE;
     } 
 
+    //输出窗口 大小为屏幕的一半
     m_pOutWindow = newwin(LINES / 2, COLS, 0, 0);
     if(!m_pOutWindow)
     {
@@ -61,15 +63,19 @@ int SimpleUI::Run()
 
     return 0;
 ERR_NCURESE:
+    m_bRun = false;
+    m_bInit = false;
     endwin();
     return -1;
 }
 
 int SimpleUI::Stop()
 {
+    DLOGDEBUG("Ready to stop UI");
     if(!m_bRun)
         return 0;
     m_bRun = false;
+    wtimeout(m_pInWindow, 0);
     int ret = pthread_join(m_tReceive, NULL);
     if(ret < 0)
     {
@@ -78,12 +84,14 @@ int SimpleUI::Stop()
     }
     delwin(m_pInWindow);
     delwin(m_pOutWindow);
+    endwin();
     m_pInWindow = nullptr;
     m_pOutWindow = nullptr;
     m_inRow = 0;
     m_putRow = 0;
     m_putMaxRow = 0;
-    endwin();
+    m_bInit = false;
+    DLOGDEBUG("Stop UI success");
     return ret;
 }
 
@@ -111,13 +119,30 @@ void *SimpleUI::ReceiveThread(void * args)
     while(pUI->m_bRun)
     {
         bzero(buf, 1024);
-        mvwgetstr(pInWindow, 0, 0, buf);
-        DLOGDEBUG("user input %s", buf);
-        wclrtoeol(pInWindow);
-        wrefresh(pInWindow);
-        struct SimpleClient::UIevent event{SimpleClient::UI_USER_INPUT,  std::string(buf)};
-        pUI->m_pClient->putUIevent(event);
+        int ret = mvwgetstr(pInWindow, 0, 0, buf);
+        if(ret < 0)
+        {
+            DLOGDEBUG("input get err!");
+            break;
+        }
+        DLOGDEBUG("user input %d: %s", ret, buf);
+        if( (strlen(buf) == 4 ) && !strncmp(buf, "quit", 4) )
+        {
+            endwin();
+            struct SimpleClient::UIevent event{SimpleClient::UI_USER_QUIT, nullptr};
+            DLOGDEBUG("send put msg to client");
+            pUI->m_pClient->putUIevent(event);
+        }
+        else
+        {
+            wclrtoeol(pInWindow);
+            wrefresh(pInWindow);
+            struct SimpleClient::UIevent event{SimpleClient::UI_USER_INPUT,  std::string(buf)};
+            DLOGDEBUG("send quit msg to client");
+            pUI->m_pClient->putUIevent(event);
+        }
     }
+    DLOGDEBUG("Exit UI thread");
     return NULL;
 }
 

@@ -17,9 +17,16 @@
 #include "SimpleClient.h"
 #include "Log/SimpleLogImpl.h"
 
-SimpleClient::SimpleClient() : m_hSocket(-1), m_Port(-1), m_HostIP(0), m_bWork(false)
+SimpleClient::SimpleClient() : m_hSocket(-1), m_Port(-1), m_HostIP(0), m_bWork(false), m_pUI(nullptr)
 {
 
+}
+
+SimpleClient::~SimpleClient()
+{
+    assert(m_hSocket == -1);
+    assert(!m_pUI);
+    assert(!m_bWork);
 }
 
 int SimpleClient::Init(const char *pName, const char *pIP, int port)
@@ -39,6 +46,7 @@ int SimpleClient::Init(const char *pName, const char *pIP, int port)
     if(ret != 1)
     {
         DLOGERROR("Invaild IP address %s", pIP);
+        abort();
         goto mERR;
     }
     m_hSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -60,6 +68,11 @@ int SimpleClient::Init(const char *pName, const char *pIP, int port)
     ret = pthread_cond_init(&m_Cond, NULL);
 
     //启动ui
+    m_pUI = new SimpleUI(this);
+    if(!m_pUI)
+    {
+        goto mERR;
+    }
     ret = m_pUI->Run();
     if(ret < 0)
     {
@@ -82,6 +95,7 @@ int SimpleClient::Init(const char *pName, const char *pIP, int port)
 
 int SimpleClient::Run()
 {
+    assert(this);
     assert(!m_bWork);
     int ret;
     //启动网络部分
@@ -107,6 +121,7 @@ int SimpleClient::Run()
     while (m_bWork)
     {
         //client主线程lock
+        DLOGDEBUG("Client main thread enter lock");
         pthread_mutex_lock(&m_queMutex);
         while(m_EventQueue.empty())
         {
@@ -115,6 +130,7 @@ int SimpleClient::Run()
         UIevent event = m_EventQueue.front();
         m_EventQueue.pop_front();
         pthread_mutex_unlock(&m_queMutex);
+        DLOGDEBUG("Client main thread leave lock");
         switch (event.eventType)
         {
         case UI_USER_INPUT:
@@ -123,7 +139,17 @@ int SimpleClient::Run()
             assert( event.arg.has_value());
             ClientText text{m_SelfAttr.UID, std::any_cast<std::string>(event.arg)};
             SimpleMsgHdr *pMsg = UserInputMsg::Pack(m_SendBuf, text);
-            Send(pMsg);
+            int ret = Send(pMsg);
+            if(ret < 0)
+            {
+                DLOGERROR("Client failed to Send msg");
+            }
+            DLOGDEBUG("send usr input from client");
+        }
+            break;
+        case UI_USER_QUIT:
+        {
+            m_pUI->Stop();
         }
             break;
         
@@ -164,9 +190,12 @@ void SimpleClient::OnReceive()
 
 void SimpleClient::putUIevent(UIevent & event)
 {
+    DLOGDEBUG("Enter a lock");
     pthread_mutex_lock(&m_queMutex);
     m_EventQueue.push_back(event);
     pthread_mutex_unlock(&m_queMutex);
+    pthread_cond_signal(&m_Cond);
+    DLOGDEBUG("Leave a lock");
 }
 
 int SimpleClient::ConnectHost()
@@ -212,32 +241,6 @@ int SimpleClient::Login()
     return 0;
 }
 
-void SimpleClient::PrintMsgToScreen(const SimpleMsgHdr *pMsg)
-{
-    assert(pMsg);
-    assert(pMsg->FrameHead == MSG_FRAME_HEADER);
-    assert(pMsg->Length < BUF_MAX_LEN);
-
-    switch(pMsg->ID)
-    {
-    case SPLMSG_CHAT :
-    {
-        ServerText text;
-        ServerChatMsg::Unpack(pMsg, text);
-        m_pUI->PrintToScreen( FormatClientText(text).c_str());
-    }
-    case SPLMSG_ERR:
-    {
-        ErrMessage *pErrMsg = (ErrMessage *)pMsg;
-        m_pUI->PrintToScreen("Err! Err type :");
-    }
-        break;
-    default:
-        std::cout << "Unkown Message type" << std::endl;
-        break;
-    }
-}
-
 std::string SimpleClient::FormatClientText(const ServerText &text) const
 {
     UserConstIt it = m_Users.find(text.UID);
@@ -245,7 +248,7 @@ std::string SimpleClient::FormatClientText(const ServerText &text) const
     std::stringstream stream;
     struct tm *pTime = localtime(&text.Time);
     stream << "<" <<pTime->tm_hour << ">:"
-            << '<' <<pTime->tm_min << ">."
+            << '<' <<pTime->tm_min << ">:"
             << '<' <<pTime->tm_sec << ">"
             << it->second.UserName << ": "
             << text.content
@@ -274,7 +277,8 @@ int SimpleClient::HandleMsg(const SimpleMsgHdr *pMsg)
     {
     case SPLMSG_LOGIN_OK:
     {
-        std::cout << "Login success!" << std::endl;
+        DLOGINFO("Recv SPLMSG_LOGIN_OK");
+        m_pUI->PrintToScreen("Login success!");
         const LoginOkMessage *pLogin = static_cast<const LoginOkMessage*>(pMsg);
         assert(pLogin->UID != 0);
         m_SelfAttr.UID = pLogin->UID;
@@ -283,25 +287,47 @@ int SimpleClient::HandleMsg(const SimpleMsgHdr *pMsg)
         break;
     case SPLMSG_LOGIN_NOTICE:
     {
+        DLOGINFO("Recv SPLMSG_LOGIN_NOTICE");
         UserAttr attr;
         LoginNoticeMsg::Unpack(pMsg, attr);
         if(attr.UID == m_SelfAttr.UID)
             break;
         m_Users.insert({attr.UID, attr});
+        std::stringstream stream;
+        stream << "Welcome " << attr.UserName << " come in!" << std::endl;
+        m_pUI->PrintToScreen(stream.str().c_str());
     }
         break;
     case SPLMSG_CHAT:
     {
-        PrintMsgToScreen(pMsg);
+        DLOGINFO("Recv SPLMSG_CHAT");
+        ServerText text;
+        ServerChatMsg::Unpack(pMsg, text);
+        m_pUI->PrintToScreen( FormatClientText(text).c_str());
     }
         break;
     case SPLMSG_ERR:
     {
-        PrintMsgToScreen(pMsg);
+        ErrMessage *pErrMsg = (ErrMessage *)pMsg;
+        DLOGWARN("recv error msg type: %04x", pErrMsg->Errtype);
+        m_pUI->PrintToScreen("Err! Err type :");
+        switch (pErrMsg->Errtype)
+        {
+        case ERRMSG_NAMEXIST:
+        {
+            //need more opreation
+            m_pUI->Stop();
+        }
+            break;
+        
+        default:
+            break;
+        }
     }
         break;
     case SPLMSG_USERATTR:
     {
+        DLOGINFO("Recv SPLMSG_USERATTR");
         UserAttrMsg::Unpack(static_cast<const UserAttrMsg*>(pMsg), m_Users);
     }
         break;

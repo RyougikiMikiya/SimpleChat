@@ -31,7 +31,7 @@ class SimpleClient : public IReceiver
 {
 public:
     SimpleClient();
-    ~SimpleClient(){}
+    ~SimpleClient();
 
     int Init(const char *pName, const char *pIP, int port);
     int Run();
@@ -42,7 +42,8 @@ public:
 public:
     enum UIeventType
     {
-        UI_USER_INPUT
+        UI_USER_INPUT,
+        UI_USER_QUIT
     };
 
     //for ui report a event, ui choose a event type and result.
@@ -59,7 +60,6 @@ private:
     int Login();
 
     std::string FormatClientText(const ServerText &text) const;
-    void PrintMsgToScreen(const SimpleMsgHdr *pMsg);
 
     const SimpleMsgHdr *Receive();
     int HandleMsg(const SimpleMsgHdr *pMsg);
