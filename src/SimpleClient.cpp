@@ -133,6 +133,11 @@ int SimpleClient::Run()
         DLOGDEBUG("Client main thread leave lock");
         switch (event.eventType)
         {
+        case UI_USER_LOGIN:
+        {
+
+        }
+            break;
         case UI_USER_INPUT:
         {
             assert( event.arg.type() == typeid(std::string) );
@@ -147,9 +152,17 @@ int SimpleClient::Run()
             DLOGDEBUG("send usr input from client");
         }
             break;
+        case UI_USER_LOGOUT:
+        {
+
+        }
+            break;
         case UI_USER_QUIT:
         {
-            m_pUI->Stop();
+            DLOGDEBUG("recv user quit");
+            m_pUI->WaitUIStop();
+            Stop();
+            m_bWork = false;
         }
             break;
         
@@ -169,7 +182,18 @@ mERR:
 int SimpleClient::Stop()
 {
     assert(this);
-    return m_Listener.Stop();
+    int ret = m_Listener.UnRegisterRecevier(m_hSocket, this);
+    ret = m_Listener.Stop();
+    ret = m_Listener.UninitListener();
+    ret = close(m_hSocket);
+    if(ret < 0)
+        DLOGERROR("close client socket err");
+    m_hSocket = -1;
+    delete m_pUI;
+    m_pUI = nullptr;
+    pthread_mutex_destroy(&m_queMutex);
+    pthread_cond_destroy(&m_Cond);
+    return ret;
 }
 
 void SimpleClient::OnReceive()
@@ -316,7 +340,6 @@ int SimpleClient::HandleMsg(const SimpleMsgHdr *pMsg)
         case ERRMSG_NAMEXIST:
         {
             //need more opreation
-            m_pUI->Stop();
         }
             break;
         

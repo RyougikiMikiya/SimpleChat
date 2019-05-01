@@ -69,22 +69,22 @@ ERR_NCURESE:
     return -1;
 }
 
+int SimpleUI::WaitUIStop()
+{
+    assert(!m_bRun);
+    int ret = pthread_join(m_tReceive, NULL);
+    return ret;
+}
+
 int SimpleUI::Stop()
 {
     DLOGDEBUG("Ready to stop UI");
     if(!m_bRun)
         return 0;
     m_bRun = false;
-    wtimeout(m_pInWindow, 0);
-    int ret = pthread_join(m_tReceive, NULL);
-    if(ret < 0)
-    {
-        //error
-        ret = -1;
-    }
-    delwin(m_pInWindow);
-    delwin(m_pOutWindow);
-    endwin();
+    int ret = delwin(m_pInWindow);
+    ret = delwin(m_pOutWindow);
+    ret = endwin();
     m_pInWindow = nullptr;
     m_pOutWindow = nullptr;
     m_inRow = 0;
@@ -128,9 +128,9 @@ void *SimpleUI::ReceiveThread(void * args)
         DLOGDEBUG("user input %d: %s", ret, buf);
         if( (strlen(buf) == 4 ) && !strncmp(buf, "quit", 4) )
         {
-            endwin();
-            struct SimpleClient::UIevent event{SimpleClient::UI_USER_QUIT, nullptr};
-            DLOGDEBUG("send put msg to client");
+            pUI->Stop();
+            struct SimpleClient::UIevent event{SimpleClient::UI_USER_QUIT, 0};
+            DLOGDEBUG("send quit msg to client");
             pUI->m_pClient->putUIevent(event);
         }
         else
@@ -138,7 +138,7 @@ void *SimpleUI::ReceiveThread(void * args)
             wclrtoeol(pInWindow);
             wrefresh(pInWindow);
             struct SimpleClient::UIevent event{SimpleClient::UI_USER_INPUT,  std::string(buf)};
-            DLOGDEBUG("send quit msg to client");
+            DLOGDEBUG("send put msg to client");
             pUI->m_pClient->putUIevent(event);
         }
     }

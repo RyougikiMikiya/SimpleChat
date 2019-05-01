@@ -17,12 +17,15 @@ public:
 
     }
     int Run();
-    int Stop();
+    int WaitUIStop();
     int PrintToScreen(const char *str);
     ~SimpleUI();
 
 private:
     static void *ReceiveThread(void *);
+
+    void LoginUI();
+    int Stop();
     
     volatile bool m_bRun;
     bool m_bInit;
@@ -31,7 +34,6 @@ private:
     int m_inRow;//输入光标行号
     int m_putRow;//输出光标行号
     int m_putMaxRow;//输出光标最大行号
-
 
     SimpleClient *m_pClient;
     pthread_t m_tReceive;

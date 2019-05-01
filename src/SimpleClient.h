@@ -42,11 +42,17 @@ public:
 public:
     enum UIeventType
     {
+        UI_USER_LOGIN,
         UI_USER_INPUT,
+        UI_USER_LOGOUT,
         UI_USER_QUIT
     };
 
-    //for ui report a event, ui choose a event type and result.
+    enum CLIENTSTATUS
+    {
+        CLIENTSTATUS_LOGIN = 0,
+        CLIENTSTATUS_NORMAL
+    };
     struct UIevent
     {
         UIeventType eventType;
