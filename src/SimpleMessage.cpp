@@ -457,3 +457,97 @@ void LoginNoticeMsg::Unpack(const SimpleMsgHdr *pMsgHeader, UserAttr &attr)
 
     assert(totalLen == 0);
 }
+
+LogoutMsg *LogoutMsg::Pack(void *pSendBuf, const UserAttr &attr)
+{
+    assert(pSendBuf);
+    assert(attr.UserName.length()!= 0);
+    LogoutMsg msg(attr.UserName.length());
+    SimpleMsgHdr *pHeader = &msg;
+    char *pTmp = reinterpret_cast<char*>(pSendBuf);
+
+    pTmp = PutInStream(pTmp, *pHeader);
+    pTmp = PutInStream(pTmp, attr.UID);
+    pTmp = PutInStream(pTmp, attr.bOnline);
+    pTmp = PutStringInStream(pTmp, attr.UserName.c_str(), attr.UserName.length());
+    LogoutMsg *pFull = reinterpret_cast<LogoutMsg*>(pSendBuf);
+
+    return pFull;
+}
+
+void LogoutMsg::Unpack(const SimpleMsgHdr *pMsgHeader, UserAttr &attr)
+{
+    assert(pMsgHeader);
+    assert(pMsgHeader->FrameHead == MSG_FRAME_HEADER);
+    assert(pMsgHeader->ID == SPLMSG_LOGOUT);
+    assert(pMsgHeader->Length > 0);
+
+    int totalLen = pMsgHeader->Length;
+
+    //skip header
+    pMsgHeader += 1;
+
+    const char *pTmp = reinterpret_cast<const char*>(pMsgHeader);
+    pTmp = GetInStream(pTmp, &attr.UID);
+    totalLen -= sizeof(sizeof(attr.UID));
+
+    pTmp = GetInStream(pTmp, &attr.bOnline);
+    totalLen -= sizeof(attr.bOnline);
+
+    int nameLen;
+    pTmp = GetInStream(pTmp, &nameLen);
+    totalLen -= sizeof(int);
+
+    attr.UserName.insert(0, pTmp, nameLen);
+    pTmp += nameLen;
+    totalLen -= nameLen;
+
+    assert(totalLen == 0);
+}
+
+LogoutNoticeMsg *LogoutNoticeMsg::Pack(void *pSendBuf, const UserAttr &attr)
+{
+    assert(pSendBuf);
+    assert(attr.UserName.length()!= 0);
+    LogoutNoticeMsg msg(attr.UserName.length());
+    SimpleMsgHdr *pHeader = &msg;
+    char *pTmp = reinterpret_cast<char*>(pSendBuf);
+
+    pTmp = PutInStream(pTmp, *pHeader);
+    pTmp = PutInStream(pTmp, attr.UID);
+    pTmp = PutInStream(pTmp, attr.bOnline);
+    pTmp = PutStringInStream(pTmp, attr.UserName.c_str(), attr.UserName.length());
+    LogoutNoticeMsg *pFull = reinterpret_cast<LogoutNoticeMsg*>(pSendBuf);
+
+    return pFull;
+}
+
+void LogoutNoticeMsg::Unpack(const SimpleMsgHdr *pMsgHeader, UserAttr &attr)
+{
+    assert(pMsgHeader);
+    assert(pMsgHeader->FrameHead == MSG_FRAME_HEADER);
+    assert(pMsgHeader->ID == SPLMSG_LOGOUT_NOTICE);
+    assert(pMsgHeader->Length > 0);
+
+    int totalLen = pMsgHeader->Length;
+
+    //skip header
+    pMsgHeader += 1;
+
+    const char *pTmp = reinterpret_cast<const char*>(pMsgHeader);
+    pTmp = GetInStream(pTmp, &attr.UID);
+    totalLen -= sizeof(sizeof(attr.UID));
+
+    pTmp = GetInStream(pTmp, &attr.bOnline);
+    totalLen -= sizeof(attr.bOnline);
+
+    int nameLen;
+    pTmp = GetInStream(pTmp, &nameLen);
+    totalLen -= sizeof(int);
+
+    attr.UserName.insert(0, pTmp, nameLen);
+    pTmp += nameLen;
+    totalLen -= nameLen;
+
+    assert(totalLen == 0);
+}

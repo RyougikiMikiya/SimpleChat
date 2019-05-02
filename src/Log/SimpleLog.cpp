@@ -1,8 +1,9 @@
-#include "SimpleLogImpl.h"
+#include "SimpleLog.h"
 
-logImpl *SimpleLog::pLogImpl = nullptr;
+static logImplSTDOUT g_STDOUT; 
+logImpl *SimpleLog::pLogImpl = &g_STDOUT;
 SimpleLog::LOGLEVEL SimpleLog::slevel = SimpleLog::LOGINFO;
-std::string SimpleLog::sLogLocation = "/home/wayne/log/";
+std::string SimpleLog::sLogLocation = "";
 
 void SimpleLog::WriteLog(LOGLEVEL lvl, time_t time, const char *filename, int lineno, const char *log, ...)
 {

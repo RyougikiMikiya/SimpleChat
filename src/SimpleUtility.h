@@ -28,6 +28,16 @@ struct UserAttr
     bool bOnline;
     std::string UserName;
     //some ohter attrs
+    bool operator ==(UserAttr & attr)
+    {
+        return ( (attr.UserName == UserName) && (attr.UID == UID) );
+    }
+    void clear()
+    {
+        UID = 0;
+        bOnline = false;
+        UserName.clear();
+    }
 };
 
 struct AuthInfo

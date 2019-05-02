@@ -307,6 +307,14 @@ uint64_t SimpleServer::CheckNameExisted(const std::string &name) const
     return it != m_Users.cend() ? it->second.UID : 0;
 }
 
+int SimpleServer::UserLogout(UserAttr &users)
+{
+    UserIt it = m_Users.find(users.UID);
+    assert(it != m_Users.end());
+    it->second.bOnline = false;
+    return 0;
+}
+
 void SimpleServer::ReportMsgIn(CSession::SessionReport & report)
 {
     pthread_mutex_lock(&m_ReportMutex);
@@ -346,9 +354,12 @@ void SimpleServer::OnSessionFinished(SimpleServer::CSession *pSession)
     m_Sessions.erase(it);
 
     //change status
-    UserIt uit = m_Users.find( pSession->GetUID() );
-    assert(uit != m_Users.end());
-    uit->second.bOnline = false;
+    if (pSession->GetUID() != 0)
+    {
+        UserIt uit = m_Users.find(pSession->GetUID());
+        assert(uit != m_Users.end());
+        uit->second.bOnline = false;
+    }
     pSession->Destory();
     delete pSession;
 }
@@ -384,7 +395,14 @@ void SimpleServer::CSession::OnReceive()
         SessionReport report;
         report.pReport = &SimpleServer::OnSessionFinished;
         report.pReporter = this;
+        int ret = m_pServer->m_Listener.UnRegisterRecevier(m_hFD, this);
+        if (ret < 0)
+        {
+            //error handle
+            DLOGERROR("m_pServer->m_Listener.UnRegisterRecevier");
+        }
         m_pServer->ReportMsgIn(report);
+        
         return;
     }
     HandleMessage(pMsg);
@@ -403,17 +421,12 @@ int SimpleServer::CSession::Destory()
     assert(this);
     assert(m_pServer);
 
-    int ret = m_pServer->m_Listener.UnRegisterRecevier(m_hFD, this);
-    if(ret < 0)
-    {
-        //error handle
-        DLOGERROR("m_pServer->m_Listener.UnRegisterRecevier");
-    }
-    ret = close(m_hFD);
+    int ret = close(m_hFD);
     if(ret < 0)
     {
         DLOGERROR("close m_hFD %s", strerror(errno));
     }
+    m_UID = 0;
     return ret;
 }
 
@@ -423,6 +436,7 @@ const SimpleMsgHdr *SimpleServer::CSession::Recevie()
     int ret = RecevieMessage(m_hFD, &pMsg);
     if(ret < 0)
     {
+        DLOGWARN("recv NULL msg");
         return NULL;
     }
     assert(pMsg->FrameHead == MSG_FRAME_HEADER);
@@ -471,6 +485,16 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
             LoginNoticeMsg *pNotice = LoginNoticeMsg::Pack(m_SendBuf, attr);
             m_pServer->PushToAll(pNotice);
         }
+    }
+        break;
+    case SPLMSG_LOGOUT:
+    {
+        m_UID = 0;
+        UserAttr attr;
+        LogoutMsg::Unpack(pMsg, attr);
+        m_pServer->UserLogout(attr);
+        SimpleMsgHdr *pNotice = LogoutNoticeMsg::Pack(m_SendBuf, attr);
+        m_pServer->PushToAll(pNotice);
     }
         break;
     case SPLMSG_USERINPUT:
