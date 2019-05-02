@@ -307,6 +307,14 @@ uint64_t SimpleServer::CheckNameExisted(const std::string &name) const
     return it != m_Users.cend() ? it->second.UID : 0;
 }
 
+int SimpleServer::UserLogout(UserAttr &users)
+{
+    UserIt it = m_Users.find(users.UID);
+    assert(it != m_Users.end());
+    it->second.bOnline = false;
+    return 0;
+}
+
 void SimpleServer::ReportMsgIn(CSession::SessionReport & report)
 {
     pthread_mutex_lock(&m_ReportMutex);
@@ -477,6 +485,16 @@ int SimpleServer::CSession::HandleMessage(const SimpleMsgHdr *pMsg)
             LoginNoticeMsg *pNotice = LoginNoticeMsg::Pack(m_SendBuf, attr);
             m_pServer->PushToAll(pNotice);
         }
+    }
+        break;
+    case SPLMSG_LOGOUT:
+    {
+        m_UID = 0;
+        UserAttr attr;
+        LogoutMsg::Unpack(pMsg, attr);
+        m_pServer->UserLogout(attr);
+        SimpleMsgHdr *pNotice = LogoutNoticeMsg::Pack(m_SendBuf, attr);
+        m_pServer->PushToAll(pNotice);
     }
         break;
     case SPLMSG_USERINPUT:

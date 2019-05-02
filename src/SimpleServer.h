@@ -67,11 +67,13 @@ public:
 
 private:
     void PushToAll(const SimpleMsgHdr *pMsg);
-    //UI
 
     //function for login
     uint64_t LoginAuthentication(const AuthInfo &info);
     uint64_t CheckNameExisted(const std::string &name) const;
+
+    //function for logout
+    int UserLogout(UserAttr &);
 
     //function for report
     void ReportMsgIn(CSession::SessionReport & report);

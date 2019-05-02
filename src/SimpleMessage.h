@@ -30,7 +30,9 @@ enum MessageID
     SPLMSG_ERR,
     SPLMSG_DATAHEAD,
     SPLMSG_DATAEND,
-    SPLMSG_USERATTR
+    SPLMSG_USERATTR,
+    SPLMSG_LOGOUT,
+    SPLMSG_LOGOUT_NOTICE
 };
 
 enum BroadCastType
@@ -211,6 +213,54 @@ public:
 private:
     //len 表示string所包含字符串长度，下同
     LoginNoticeMsg (int16_t len) : SimpleMsgHdr( SPLMSG_LOGIN_NOTICE , len + sizeof(uint64_t) + sizeof(bool) + sizeof(int) + sizeof(SimpleMsgHdr))
+    {
+        assert(Length <= BUF_MAX_LEN);
+    }
+
+    /*
+     * Contents has one UserAttr like
+     * uint64_t : UserAttr.UID
+     * bool : UserAttr.bOnline
+     * int : string lenth
+     * char[] : string
+    */
+
+//    UserAttr attr
+};
+
+struct LogoutMsg : public SimpleMsgHdr
+{
+public:
+    static LogoutMsg *Pack(void *pSendBuf,const UserAttr &attr);
+    static void Unpack(const SimpleMsgHdr *pMsgHeader, UserAttr &attr);
+
+private:
+    //len 表示string所包含字符串长度，下同
+    LogoutMsg (int16_t len) : SimpleMsgHdr( SPLMSG_LOGOUT , len + sizeof(uint64_t) + sizeof(bool) + sizeof(int) + sizeof(SimpleMsgHdr))
+    {
+        assert(Length <= BUF_MAX_LEN);
+    }
+
+    /*
+     * Contents has one UserAttr like
+     * uint64_t : UserAttr.UID
+     * bool : UserAttr.bOnline
+     * int : string lenth
+     * char[] : string
+    */
+
+//    UserAttr attr
+};
+
+struct LogoutNoticeMsg : public SimpleMsgHdr
+{
+public:
+    static LogoutNoticeMsg *Pack(void *pSendBuf,const UserAttr &attr);
+    static void Unpack(const SimpleMsgHdr *pMsgHeader, UserAttr &attr);
+
+private:
+    //len 表示string所包含字符串长度，下同
+    LogoutNoticeMsg (int16_t len) : SimpleMsgHdr( SPLMSG_LOGOUT_NOTICE , len + sizeof(uint64_t) + sizeof(bool) + sizeof(int) + sizeof(SimpleMsgHdr))
     {
         assert(Length <= BUF_MAX_LEN);
     }

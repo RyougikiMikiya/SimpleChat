@@ -53,6 +53,7 @@ int SimpleUI::Run()
 
     m_putMaxRow = getmaxy(m_pOutWindow);
 
+    ret = pthread_mutex_init(&m_outputMutex, NULL);
     ret = pthread_create(&m_tReceive, NULL, ReceiveThread, this);
     if(ret < 0)
     {
@@ -98,6 +99,7 @@ int SimpleUI::Stop()
 int SimpleUI::PrintToScreen(const char *str)
 {
     assert(m_bInit);
+    pthread_mutex_lock(&m_outputMutex);
     if( m_putRow  > (m_putMaxRow/2) )
     {
         werase(m_pOutWindow);
@@ -107,17 +109,37 @@ int SimpleUI::PrintToScreen(const char *str)
     DLOGDEBUG("out put %s", str);
     m_putRow++;
     wrefresh(m_pOutWindow);
+    pthread_mutex_unlock(&m_outputMutex);
     return 0;
 }
 
 void *SimpleUI::ReceiveThread(void * args)
 {
+    assert(args);
     SimpleUI *pUI = (SimpleUI *)args;
     WINDOW *pInWindow = pUI->m_pInWindow;
     assert(pInWindow);
     char buf[1024];
     while(pUI->m_bRun)
     {
+        auto status = pUI->m_pClient->GetCliStatus();
+        if(status == SimpleClient::CLIENTSTATUS_NEED_LOGIN)
+        {
+            wclear(pUI->m_pInWindow);
+            wclear(pUI->m_pOutWindow);
+            pUI->m_putRow = 0;
+            mvwprintw(pUI->m_pOutWindow, 0, 0, "Please enter name:");
+            pUI->m_putRow++;
+            wrefresh(pUI->m_pOutWindow);
+            mvwgetstr(pUI->m_pInWindow, 0, 0, buf);
+            wclrtoeol(pUI->m_pInWindow);
+            wrefresh(pUI->m_pInWindow);
+            struct SimpleClient::UIevent event{SimpleClient::UI_USER_LOGIN, std::string(buf)};
+            pUI->m_pClient->putUIevent(event);
+            pUI->m_pClient->WaitLoginFinish();
+            if(  pUI->m_pClient->GetCliStatus() != SimpleClient::CLIENTSTATUS_LOGIN_SUCCESS )
+                continue;
+        }
         bzero(buf, 1024);
         int ret = mvwgetstr(pInWindow, 0, 0, buf);
         if(ret < 0)
@@ -132,6 +154,14 @@ void *SimpleUI::ReceiveThread(void * args)
             struct SimpleClient::UIevent event{SimpleClient::UI_USER_QUIT, 0};
             DLOGDEBUG("send quit msg to client");
             pUI->m_pClient->putUIevent(event);
+        }
+        else if( (strlen(buf) == 6 ) && !strncmp(buf, "logout", 6) )
+        {
+            struct SimpleClient::UIevent event{SimpleClient::UI_USER_LOGOUT, 0};
+            DLOGDEBUG("send logout msg to client");
+            pUI->m_pClient->putUIevent(event);
+            pUI->m_pClient->WaitLogOutFinish();
+            assert( pUI->m_pClient->GetCliStatus() == SimpleClient::CLIENTSTATUS_NEED_LOGIN );
         }
         else
         {

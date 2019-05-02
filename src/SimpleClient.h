@@ -33,13 +33,15 @@ public:
     SimpleClient();
     ~SimpleClient();
 
-    int Init(const char *pName, const char *pIP, int port);
+    int Init(const char *pIP, int port);
     int Run();
     int Stop();
 //overrides
     void OnReceive();
 
 public:
+
+//for UI
     enum UIeventType
     {
         UI_USER_LOGIN,
@@ -50,9 +52,10 @@ public:
 
     enum CLIENTSTATUS
     {
-        CLIENTSTATUS_LOGIN = 0,
-        CLIENTSTATUS_NORMAL
+        CLIENTSTATUS_NEED_LOGIN = 0,
+        CLIENTSTATUS_LOGIN_SUCCESS,
     };
+
     struct UIevent
     {
         UIeventType eventType;
@@ -60,15 +63,31 @@ public:
     };
 
     void putUIevent(UIevent & event);
+    SimpleClient::CLIENTSTATUS GetCliStatus();
+    void WaitLoginFinish();
+    void WaitLogOutFinish();
 
 private:
+//for ui
+    void PostFinish(int type);
+
+private:
+    enum CLI_MSG_RESULT
+    {
+        CMSGR_NORMAL = 0,
+        CMSGR_LOGINAUTHSUCCESS = 100,
+        CMSGR_LOGINFAILED,
+    };
+
+
+
     int ConnectHost();
     int Login();
 
     std::string FormatClientText(const ServerText &text) const;
 
     const SimpleMsgHdr *Receive();
-    int HandleMsg(const SimpleMsgHdr *pMsg);
+    SimpleClient::CLI_MSG_RESULT HandleMsg(const SimpleMsgHdr *pMsg);
     
     int Send(SimpleMsgHdr *pMsg)
     {
@@ -77,8 +96,12 @@ private:
 
 
 private:
+    CLIENTSTATUS m_cliStatus;
+
     SimpleUI *m_pUI;
     std::deque<UIevent> m_EventQueue;
+    sem_t m_LoginSem;
+    sem_t m_LogoutSem;
     pthread_mutex_t m_queMutex;
     pthread_cond_t m_Cond;
 

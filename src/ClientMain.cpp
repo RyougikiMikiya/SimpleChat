@@ -15,15 +15,15 @@ int main(int argc, char **argv)
     SimpleLog::LogStart();
     SimpleLog::SetLogLevel(SimpleLog::LOGDEBUG);
     DLOGINFO("ready Start");
-    if (argc != 4)
+    if (argc != 3)
     {
-        cout << "Use \"Client name ip port\" " << endl;
+        cout << "Use \"Client ip port\" " << endl;
         return -1;
     }
 
-    cout << atoi(argv[3]) << endl;
+    cout << atoi(argv[2]) << endl;
     SimpleClient cli;
-    int ret = cli.Init(argv[1], argv[2], atoi(argv[3]));
+    int ret = cli.Init(argv[1], atoi(argv[2]));
     if(ret < 0)
     {
         return -1;

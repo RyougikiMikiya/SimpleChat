@@ -16,10 +16,11 @@ public:
     {
 
     }
+    ~SimpleUI();
+
     int Run();
     int WaitUIStop();
     int PrintToScreen(const char *str);
-    ~SimpleUI();
 
 private:
     static void *ReceiveThread(void *);
@@ -37,7 +38,7 @@ private:
 
     SimpleClient *m_pClient;
     pthread_t m_tReceive;
-    pthread_mutex_t m_curseMutex;
+    pthread_mutex_t m_outputMutex;
 };
 
 #endif
